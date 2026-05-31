@@ -1,0 +1,19 @@
+{
+  "name": "OpenHands (Docker-in-Docker)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "enableNonRootDocker": "true"
+    }
+  },
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "OpenHands UI",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "postCreateCommand": "cd /workspaces/${localWorkspaceFolderBasename}/openhands && cp -n .env.example .env || true",
+  "remoteUser": "vscode"
+}

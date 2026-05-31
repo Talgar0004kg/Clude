@@ -1,0 +1,18 @@
+services:
+  openhands:
+    image: docker.openhands.dev/openhands/openhands:${OPENHANDS_VERSION:-latest}
+    ports:
+      - "3000:3000"
+    environment:
+      LLM_MODEL: ${LLM_MODEL:-gemini/gemini-2.5-flash}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      SANDBOX_RUNTIME_CONTAINER_IMAGE: docker.openhands.dev/openhands/runtime:${AGENT_SERVER_IMAGE_TAG:-0.39.0-nikolaik}
+      LOG_ALL_EVENTS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - openhands-state:/root/.openhands
+    restart: unless-stopped
+
+volumes:
+  openhands-state:
