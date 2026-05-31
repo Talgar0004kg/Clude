@@ -35,6 +35,8 @@ TOOL_LABELS = {
     "read_file": "📄 read_file",
     "write_file": "✏️ write_file",
     "run_command": "⚙️ run_command",
+    "fetch_url": "🌐 fetch_url",
+    "download_site": "⬇️ download_site",
     "send_files": "📦 send_files",
     "git_commit": "💾 git_commit",
 }
@@ -75,7 +77,7 @@ def _format_event(ev: dict) -> str | None:
     if kind == "tool_call":
         label = TOOL_LABELS.get(ev["name"], ev["name"])
         args = ev.get("args", {})
-        detail = args.get("command") or args.get("path") or ""
+        detail = args.get("command") or args.get("url") or args.get("path") or ""
         return f"{label}  {detail}".rstrip()
     if kind == "tool_result":
         return f"```\n{ev['result']}\n```"

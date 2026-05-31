@@ -26,6 +26,9 @@ SYSTEM_PROMPT = """\
 - Если пользователь прислал изображение (дизайн/скриншот сайта) — свёрстай сайт
   «один в один»: максимально точно повтори структуру, расположение блоков, цвета,
   шрифты и тексты с картинки, используя HTML/CSS (и JS при необходимости).
+- Чтобы зайти на сайт и проанализировать его — используй fetch_url. Чтобы скачать
+  сайт (страницу с ресурсами) для последующей отправки — используй download_site,
+  затем при просьбе вызови send_files.
 
 Правила:
 - Отвечай на языке пользователя (обычно по-русски), коротко и по делу — это чат.
@@ -78,6 +81,30 @@ def _build_tools() -> list:
                     parameters=sch(
                         {"command": types.Schema(type=s, description="Команда")},
                         ["command"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="fetch_url",
+                    description="Зайти на сайт по URL и получить его HTML/текст "
+                    "для анализа.",
+                    parameters=sch(
+                        {"url": types.Schema(type=s, description="Адрес сайта")},
+                        ["url"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="download_site",
+                    description="Скачать страницу сайта и её ресурсы (css/js/"
+                    "картинки) в рабочую папку — потом можно отправить архивом.",
+                    parameters=sch(
+                        {
+                            "url": types.Schema(type=s, description="Адрес сайта"),
+                            "dest": types.Schema(
+                                type=s,
+                                description="Папка назначения, по умолчанию 'site'",
+                            ),
+                        },
+                        ["url"],
                     ),
                 ),
                 types.FunctionDeclaration(

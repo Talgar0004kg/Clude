@@ -3,8 +3,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
+import urllib.request
+from html.parser import HTMLParser
 
 import config
+
+_USER_AGENT = "Mozilla/5.0 (compatible; TelegramAgent/1.0)"
 
 
 class ToolError(Exception):
@@ -74,11 +79,103 @@ def run_command(workspace: str, command: str) -> str:
     return f"Код возврата: {result.returncode}\n{output}"
 
 
+# --- Работа с сайтами ---
+
+
+def _http_get(url: str, binary: bool = False, timeout: int = 30):
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        data = resp.read()
+    return data if binary else data.decode("utf-8", errors="replace")
+
+
+def fetch_url(workspace: str, url: str) -> str:
+    """Загружает страницу по URL и возвращает её HTML/текст для анализа."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    try:
+        html = _http_get(url)
+    except Exception as exc:  # noqa: BLE001
+        raise ToolError(f"Не удалось загрузить {url}: {exc}")
+    if len(html) > config.MAX_TOOL_OUTPUT:
+        html = html[: config.MAX_TOOL_OUTPUT] + "\n... [вывод обрезан]"
+    return html
+
+
+class _AssetParser(HTMLParser):
+    """Находит ссылки на ресурсы страницы (css, js, img)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.assets: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        d = dict(attrs)
+        if tag == "link" and d.get("href"):
+            self.assets.append(d["href"])
+        elif tag == "script" and d.get("src"):
+            self.assets.append(d["src"])
+        elif tag == "img" and d.get("src"):
+            self.assets.append(d["src"])
+
+
+def download_site(workspace: str, url: str, dest: str = "site") -> str:
+    """Скачивает страницу и её ресурсы (css/js/img) в папку dest."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    folder = _resolve(workspace, dest)
+    os.makedirs(folder, exist_ok=True)
+    try:
+        html = _http_get(url)
+    except Exception as exc:  # noqa: BLE001
+        raise ToolError(f"Не удалось загрузить {url}: {exc}")
+
+    parser = _AssetParser()
+    parser.feed(html)
+
+    saved, failed = 0, 0
+    for raw in list(dict.fromkeys(parser.assets)):  # уникальные, по порядку
+        if raw.startswith(("data:", "#", "javascript:", "mailto:")):
+            continue
+        asset_url = urllib.parse.urljoin(url, raw)
+        if not asset_url.startswith(("http://", "https://")):
+            continue
+        path = urllib.parse.urlparse(asset_url).path.lstrip("/")
+        if not path or path.endswith("/"):
+            continue
+        rel = os.path.join("assets", path)
+        try:
+            abs_path = _resolve(workspace, os.path.join(dest, rel))
+        except ToolError:
+            continue
+        if saved >= 40:  # ограничение, чтобы не качать бесконечно
+            break
+        try:
+            data = _http_get(asset_url, binary=True)
+            os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+            with open(abs_path, "wb") as f:
+                f.write(data)
+            html = html.replace(raw, rel.replace(os.sep, "/"))
+            saved += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+
+    with open(os.path.join(folder, "index.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+
+    msg = f"Сайт сохранён в '{dest}/': index.html + {saved} ресурсов."
+    if failed:
+        msg += f" Не удалось скачать: {failed}."
+    return msg
+
+
 TOOL_FUNCTIONS = {
     "list_files": list_files,
     "read_file": read_file,
     "write_file": write_file,
     "run_command": run_command,
+    "fetch_url": fetch_url,
+    "download_site": download_site,
 }
 
 
