@@ -46,6 +46,23 @@ cp .env.example .env     # впишите токены и свой Telegram ID
 ```
 Затем откройте бота в Телеграме и напишите `/start`.
 
+## Локальная модель (Ollama)
+
+По умолчанию агент работает на **локальной** модели через Ollama (без облака и
+без ключей). В Codespaces:
+
+```bash
+# в отдельной вкладке терминала:
+ollama serve
+ollama pull llama3.2:3b      # один раз скачать модель
+```
+Бот сам обращается к `http://localhost:11434/api/chat`. Если сервер не запущен,
+бот подскажет это в чате/логах.
+
+> Переключиться на облачный Gemini: в `.env` поставьте `AGENT_PROVIDER=gemini` и
+> укажите `GEMINI_API_KEY`. Маленькая локальная модель быстрее и бесплатна, но
+> по качеству вёрстки и работе с инструментами заметно слабее Gemini.
+
 ## Запуск через Docker
 
 ```bash
@@ -94,7 +111,10 @@ Telegram), настраивается через `AGENT_MAX_DOWNLOAD_MB`.
 | `TELEGRAM_BOT_TOKEN` | ✅ | Токен от @BotFather |
 | `GEMINI_API_KEY` | ✅ | Ключ Gemini (https://aistudio.google.com/app/apikey) |
 | `ALLOWED_USER_IDS` | ⚠️ рекомендуется | Ваш Telegram ID (у @userinfobot). Несколько — через запятую. Пусто = все |
-| `AGENT_MODEL` | нет | Модель Gemini (по умолчанию `gemini-2.5-flash`) |
+| `AGENT_PROVIDER` | нет | `ollama` (локально, по умолчанию) или `gemini` (облако) |
+| `OLLAMA_HOST` | нет | Адрес Ollama (по умолчанию `http://localhost:11434`) |
+| `OLLAMA_MODEL` | нет | Локальная модель (по умолчанию `llama3.2:3b`) |
+| `AGENT_MODEL` | нет | Модель Gemini, если `AGENT_PROVIDER=gemini` (по умолч. `gemini-2.5-flash`) |
 | `AGENT_WORKSPACE` | нет | Базовая рабочая папка (по умолчанию `./workspace`) |
 | `AGENT_COMMAND_TIMEOUT` | нет | Таймаут команды, сек (по умолчанию `120`) |
 | `AGENT_MAX_STEPS` | нет | Лимит шагов агента на задачу (по умолчанию `25`) |

@@ -25,6 +25,13 @@ ALLOWED_USER_IDS: set[int] = _parse_ids(os.getenv("ALLOWED_USER_IDS", ""))
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
 MODEL: str = os.getenv("AGENT_MODEL", "gemini-2.5-flash").strip()
 
+# Провайдер LLM: "ollama" (локально) или "gemini" (облако).
+PROVIDER: str = os.getenv("AGENT_PROVIDER", "ollama").strip().lower()
+
+# Ollama (локальный сервер в Codespaces).
+OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434").strip()
+OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b").strip()
+
 # Агент
 _default_workspace = os.path.join(os.path.dirname(__file__), "workspace")
 WORKSPACE_BASE: str = os.path.abspath(os.getenv("AGENT_WORKSPACE", _default_workspace))

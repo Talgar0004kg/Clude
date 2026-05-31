@@ -1,13 +1,16 @@
-"""Ядро агента: цикл «Gemini → инструменты → результат» для одного чата."""
+"""Ядро агента: цикл «LLM → инструменты → результат» для одного чата.
+
+LLM-бэкенд выбирается в config (Ollama локально или Gemini). Агент хранит
+нормализованную историю сообщений и не зависит от конкретного провайдера.
+"""
 import glob
 import os
 from typing import Iterator
 
-from google import genai
-from google.genai import types
-
 import config
 import tools
+from llm import LLMError, make_client
+from tool_specs import TOOL_SPECS
 
 
 def _load_skills() -> str:
@@ -28,6 +31,7 @@ def _load_skills() -> str:
     if not parts:
         return ""
     return "\n\n# ПОДКЛЮЧЁННЫЕ СКИЛЛЫ\n\n" + "\n\n---\n\n".join(parts)
+
 
 SYSTEM_PROMPT = """\
 Ты — кодинг-агент в Телеграме, по духу похожий на Devin AI.
@@ -64,222 +68,75 @@ SYSTEM_PROMPT = """\
 """
 
 
-def _build_tools() -> list:
-    s = types.Type.STRING
-    obj = types.Type.OBJECT
-
-    def sch(props, required):
-        return types.Schema(type=obj, properties=props, required=required)
-
-    return [
-        types.Tool(
-            function_declarations=[
-                types.FunctionDeclaration(
-                    name="list_files",
-                    description="Список файлов и папок по пути (относительно рабочей папки).",
-                    parameters=sch(
-                        {"path": types.Schema(type=s, description="Путь, по умолчанию '.'")},
-                        [],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="read_file",
-                    description="Прочитать текстовый файл.",
-                    parameters=sch(
-                        {"path": types.Schema(type=s, description="Путь к файлу")},
-                        ["path"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="write_file",
-                    description="Создать или перезаписать файл.",
-                    parameters=sch(
-                        {
-                            "path": types.Schema(type=s, description="Путь к файлу"),
-                            "content": types.Schema(type=s, description="Содержимое файла"),
-                        },
-                        ["path", "content"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="run_command",
-                    description="Выполнить shell-команду в рабочей папке.",
-                    parameters=sch(
-                        {"command": types.Schema(type=s, description="Команда")},
-                        ["command"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="fetch_url",
-                    description="Зайти на сайт по URL и получить его HTML/текст "
-                    "для анализа.",
-                    parameters=sch(
-                        {"url": types.Schema(type=s, description="Адрес сайта")},
-                        ["url"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="download_site",
-                    description="Скачать страницу сайта и её ресурсы (css/js/"
-                    "картинки) в рабочую папку — потом можно отправить архивом.",
-                    parameters=sch(
-                        {
-                            "url": types.Schema(type=s, description="Адрес сайта"),
-                            "dest": types.Schema(
-                                type=s,
-                                description="Папка назначения, по умолчанию 'site'",
-                            ),
-                        },
-                        ["url"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="web_search",
-                    description="Найти что-либо в интернете (фото, книгу, "
-                    "приложение, файл, информацию). Возвращает список ссылок.",
-                    parameters=sch(
-                        {"query": types.Schema(type=s, description="Поисковый запрос")},
-                        ["query"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="download_file",
-                    description="Скачать файл по прямой ссылке (любого типа: "
-                    "jpg, png, pdf, mp3, apk, zip и т.д.) в рабочую папку.",
-                    parameters=sch(
-                        {
-                            "url": types.Schema(type=s, description="Прямая ссылка на файл"),
-                            "filename": types.Schema(
-                                type=s, description="Имя файла (необязательно)"
-                            ),
-                        },
-                        ["url"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="send_file",
-                    description="Отправить пользователю в чат конкретный файл из "
-                    "рабочей папки (любого типа, не только zip), сохраняя расширение.",
-                    parameters=sch(
-                        {"path": types.Schema(type=s, description="Путь к файлу")},
-                        ["path"],
-                    ),
-                ),
-                types.FunctionDeclaration(
-                    name="send_files",
-                    description="Упаковать рабочую папку в zip и отправить её "
-                    "пользователю в чат. Вызывай, когда просят прислать/скачать "
-                    "файлы, готовый сайт или архив.",
-                    parameters=sch({}, []),
-                ),
-                types.FunctionDeclaration(
-                    name="git_commit",
-                    description="Закоммитить рабочую папку с кодом в git-репозиторий "
-                    "(и отправить на GitHub). Вызывай, когда просят сохранить или "
-                    "закоммитить результат.",
-                    parameters=sch(
-                        {
-                            "message": types.Schema(
-                                type=s, description="Сообщение коммита"
-                            )
-                        },
-                        [],
-                    ),
-                ),
-            ]
-        )
-    ]
-
-
 class Agent:
     """История диалога + цикл рассуждения для одного чата."""
 
     def __init__(self, workspace: str) -> None:
-        if not config.GEMINI_API_KEY:
-            raise RuntimeError("Не задан GEMINI_API_KEY в .env")
-        self._client = genai.Client(api_key=config.GEMINI_API_KEY)
-        self._tools = _build_tools()
         self._workspace = workspace
-        self._contents: list = []
+        self._messages: list = []
         self._system = SYSTEM_PROMPT + _load_skills()
+        # Может бросить LLMError, если провайдер настроен неверно.
+        self._client = make_client(self._system, TOOL_SPECS)
 
     def reset(self) -> None:
-        self._contents = []
-
-    def _config(self) -> types.GenerateContentConfig:
-        return types.GenerateContentConfig(
-            system_instruction=self._system,
-            tools=self._tools,
-            temperature=0.2,
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        )
+        self._messages = []
 
     def run(self, task: str, images: list[bytes] | None = None) -> Iterator[dict]:
-        """Поток событий: assistant, tool_call, tool_result, done, error.
+        """Поток событий: assistant, tool_call, tool_result, send_zip, send_file,
+        done, error.
 
-        images — список изображений (например, дизайн сайта) в байтах (JPEG/PNG).
+        images — список изображений (например, дизайн сайта) в байтах.
         """
-        parts = [types.Part(text=task)]
-        for img in images or []:
-            parts.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
-        self._contents.append(types.Content(role="user", parts=parts))
+        self._messages.append(
+            {"role": "user", "content": task, "images": images or []}
+        )
 
         for _ in range(config.MAX_STEPS):
             try:
-                response = self._client.models.generate_content(
-                    model=config.MODEL,
-                    contents=self._contents,
-                    config=self._config(),
-                )
+                text, calls = self._client.generate(self._messages)
+            except LLMError as exc:
+                yield {"type": "error", "message": str(exc)}
+                return
             except Exception as exc:  # noqa: BLE001
-                yield {"type": "error", "message": f"Ошибка Gemini: {exc}"}
+                yield {"type": "error", "message": f"Ошибка LLM: {exc}"}
                 return
 
-            candidate = response.candidates[0] if response.candidates else None
-            if candidate is None or candidate.content is None:
-                yield {"type": "error", "message": "Пустой ответ модели."}
-                return
+            self._messages.append(
+                {"role": "assistant", "content": text, "tool_calls": calls}
+            )
 
-            self._contents.append(candidate.content)
-            parts = candidate.content.parts or []
-            calls = [p.function_call for p in parts if p.function_call]
-            texts = [p.text for p in parts if p.text]
-
-            if texts:
-                yield {"type": "assistant", "message": "\n".join(texts)}
+            if text:
+                yield {"type": "assistant", "message": text}
 
             if not calls:
                 yield {"type": "done"}
                 return
 
-            response_parts = []
             for call in calls:
-                args = dict(call.args or {})
-                yield {"type": "tool_call", "name": call.name, "args": args}
+                name = call.get("name", "")
+                args = call.get("args") or {}
+                yield {"type": "tool_call", "name": name, "args": args}
 
-                if call.name == "send_files":
-                    # Отправку архива выполняет сам бот (у него есть доступ к чату).
+                if name == "send_files":
                     yield {"type": "send_zip"}
                     result = "Архив с файлами отправлен пользователю в чат."
-                elif call.name == "send_file":
+                elif name == "send_file":
                     path = args.get("path", "")
                     yield {"type": "send_file", "path": path}
                     result = f"Файл '{path}' отправлен пользователю в чат."
-                elif call.name == "git_commit":
+                elif name == "git_commit":
                     result = tools.git_commit(
-                        self._workspace, args.get("message") or "update from telegram agent"
+                        self._workspace,
+                        args.get("message") or "update from telegram agent",
                     )
-                    yield {"type": "tool_result", "name": call.name, "result": result}
+                    yield {"type": "tool_result", "name": name, "result": result}
                 else:
-                    result = tools.execute(call.name, args, self._workspace)
-                    yield {"type": "tool_result", "name": call.name, "result": result}
+                    result = tools.execute(name, args, self._workspace)
+                    yield {"type": "tool_result", "name": name, "result": result}
 
-                response_parts.append(
-                    types.Part.from_function_response(
-                        name=call.name, response={"result": result}
-                    )
+                self._messages.append(
+                    {"role": "tool", "name": name, "content": result}
                 )
-            self._contents.append(types.Content(role="user", parts=response_parts))
 
         yield {
             "type": "error",
