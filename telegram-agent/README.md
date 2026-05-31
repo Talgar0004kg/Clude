@@ -1,16 +1,24 @@
-# Telegram Agent — кодинг-агент на Gemini
+# Telegram Agent — кодинг-агент на локальной LLM (Ollama)
 
-Телеграм-бот, который работает как автономный **кодинг-агент** на **Google
-Gemini**. Пишете задачу в чат — бот сам исследует файлы, вносит изменения и
-выполняет команды в персональной рабочей папке, присылая каждый шаг обратно.
+Телеграм-бот, который работает как автономный **кодинг-агент** на **локальной
+языковой модели**, развёрнутой через [Ollama](https://ollama.com). Пишете задачу
+в чат — бот сам исследует файлы, вносит изменения и выполняет команды в
+персональной рабочей папке, присылая каждый шаг обратно.
 
 ```
-Telegram ──► бот (python-telegram-bot) ──► Gemini API
+Telegram ──► бот (python-telegram-bot) ──► Ollama (http://localhost:11434/api/generate)
                   │
                   ▼
         инструменты в рабочей папке (песочница)
    list_files · read_file · write_file · run_command
 ```
+
+> Вызовы инструментов идут по текстовому протоколу: модель присылает JSON
+> `{"tool": "имя", "args": {...}}`, агент исполняет инструмент и возвращает
+> результат. Обычный текст без JSON означает «задача готова».
+
+> **Картинки**: модель `llama3.2:3b` текстовая, поэтому верстать сайт по
+> присланному изображению она не умеет — действует только по текстовому описанию.
 
 > Для каждого чата создаётся **отдельная** папка `workspace/<chat_id>` — модель
 > сама решает, какие инструменты вызвать, и не выходит за её пределы.
@@ -28,7 +36,7 @@ Telegram ──► бот (python-telegram-bot) ──► Gemini API
 ```
 telegram-agent/
 ├── bot.py        # телеграм-бот, стрим шагов агента в чат
-├── agent.py      # цикл агента на Gemini (вызов инструментов) + загрузка скиллов
+├── agent.py      # цикл агента на Ollama (вызов инструментов) + загрузка скиллов
 ├── tools.py      # инструменты: файлы + команды, песочница на чат
 ├── config.py     # настройки из .env
 ├── skills/       # md-скиллы, повышающие качество (web_quality.md, …)
@@ -54,11 +62,26 @@ cp .env.example .env      # заполните .env
 docker compose up --build
 ```
 
+## Локальная LLM (Ollama)
+
+Боту нужен запущенный локально сервер Ollama с загруженной моделью:
+
+```bash
+# установка (Linux): https://ollama.com/download
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve            # запустите в отдельной вкладке
+ollama pull llama3.2:3b # загрузите модель
+```
+
+Если бот сообщает про `ConnectionError` — значит сервер Ollama не запущен:
+откройте соседнюю вкладку Codespaces и выполните `ollama serve`.
+
 ## Запуск в GitHub Codespaces
 
 1. **Code → Codespaces → New codespace** (Dev Container из `telegram-agent/.devcontainer`).
 2. Зависимости установятся автоматически.
-3. Впишите токены в `.env` и запустите `python bot.py`.
+3. В соседней вкладке поднимите модель: `ollama serve` и `ollama pull llama3.2:3b`.
+4. Впишите `TELEGRAM_BOT_TOKEN` в `.env` и запустите `python bot.py`.
 
 ## Команды бота
 
@@ -92,9 +115,9 @@ Telegram), настраивается через `AGENT_MAX_DOWNLOAD_MB`.
 | Переменная | Обязательно | Описание |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | ✅ | Токен от @BotFather |
-| `GEMINI_API_KEY` | ✅ | Ключ Gemini (https://aistudio.google.com/app/apikey) |
+| `OLLAMA_URL` | нет | Адрес локального Ollama (по умолчанию `http://localhost:11434/api/generate`) |
 | `ALLOWED_USER_IDS` | ⚠️ рекомендуется | Ваш Telegram ID (у @userinfobot). Несколько — через запятую. Пусто = все |
-| `AGENT_MODEL` | нет | Модель Gemini (по умолчанию `gemini-2.5-flash`) |
+| `AGENT_MODEL` | нет | Модель Ollama (по умолчанию `llama3.2:3b`) |
 | `AGENT_WORKSPACE` | нет | Базовая рабочая папка (по умолчанию `./workspace`) |
 | `AGENT_COMMAND_TIMEOUT` | нет | Таймаут команды, сек (по умолчанию `120`) |
 | `AGENT_MAX_STEPS` | нет | Лимит шагов агента на задачу (по умолчанию `25`) |
@@ -106,5 +129,4 @@ Telegram), настраивается через `AGENT_MAX_DOWNLOAD_MB`.
 - Запускайте в изолированной среде (контейнер/Codespaces), не на машине с важными
   данными.
 - **Никогда не коммитьте `.env`** — он в `.gitignore`.
-- Если токены засветились — перевыпустите: `/revoke` у @BotFather и новый ключ на
-  aistudio.google.com.
+- Если токен Telegram засветился — перевыпустите его через `/revoke` у @BotFather.

@@ -6,7 +6,7 @@ cd "$SCRIPT_DIR"
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "✏️  Создан .env из шаблона. Заполните TELEGRAM_BOT_TOKEN, GEMINI_API_KEY и ALLOWED_USER_IDS, затем запустите снова."
+  echo "✏️  Создан .env из шаблона. Заполните TELEGRAM_BOT_TOKEN и ALLOWED_USER_IDS, затем запустите снова."
   exit 1
 fi
 
@@ -15,9 +15,13 @@ if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ "$TELEGRAM_BOT_TOKEN" = "your_telegram_
   echo "❌ TELEGRAM_BOT_TOKEN не задан. Откройте .env и вставьте токен от @BotFather."
   exit 1
 fi
-if [ -z "${GEMINI_API_KEY:-}" ] || [ "$GEMINI_API_KEY" = "your_gemini_api_key_here" ]; then
-  echo "❌ GEMINI_API_KEY не задан. Откройте .env и вставьте ключ Gemini."
-  exit 1
+
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434/api/generate}"
+OLLAMA_BASE="${OLLAMA_URL%/api/generate}"
+if ! curl -fsS "$OLLAMA_BASE/api/tags" >/dev/null 2>&1; then
+  echo "⚠️  Локальный сервер Ollama недоступен по адресу $OLLAMA_BASE."
+  echo "    Запустите его в соседней вкладке: 'ollama serve'"
+  echo "    и загрузите модель: 'ollama pull ${AGENT_MODEL:-llama3.2:3b}'"
 fi
 
 echo "📦 Устанавливаю зависимости..."

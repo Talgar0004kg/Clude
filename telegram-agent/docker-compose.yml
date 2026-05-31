@@ -3,6 +3,11 @@ services:
     build: .
     env_file: .env
     restart: unless-stopped
+    # Ollama обычно запущен на хосте. Из контейнера он доступен по
+    # host.docker.internal — пропишите этот адрес в OLLAMA_URL (.env):
+    #   OLLAMA_URL=http://host.docker.internal:11434/api/generate
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Сохраняем рабочие папки агента между перезапусками
       - agent-workspace:/app/workspace

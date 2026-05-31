@@ -21,9 +21,13 @@ def _parse_ids(raw: str) -> set[int]:
 # Разрешённые пользователи (пустой набор = разрешено всем).
 ALLOWED_USER_IDS: set[int] = _parse_ids(os.getenv("ALLOWED_USER_IDS", ""))
 
-# Gemini
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
-MODEL: str = os.getenv("AGENT_MODEL", "gemini-2.5-flash").strip()
+# Локальная LLM (Ollama)
+# Адрес локального сервера Ollama (endpoint /api/generate).
+OLLAMA_URL: str = os.getenv(
+    "OLLAMA_URL", "http://localhost:11434/api/generate"
+).strip()
+MODEL: str = os.getenv("AGENT_MODEL", "llama3.2:3b").strip()
+OLLAMA_TIMEOUT: int = int(os.getenv("OLLAMA_TIMEOUT", "300"))
 
 # Агент
 _default_workspace = os.path.join(os.path.dirname(__file__), "workspace")

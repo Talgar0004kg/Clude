@@ -1,4 +1,4 @@
-"""Телеграм-бот: кодинг-агент на Gemini.
+"""Телеграм-бот: кодинг-агент на локальной LLM (Ollama).
 
 Пользователь пишет задачу в чат → агент исследует/меняет файлы и выполняет
 команды в персональной рабочей папке → шаги приходят обратно в чат.
@@ -115,7 +115,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     await update.message.reply_text(
-        "👋 Привет! Я кодинг-агент на Gemini.\n\n"
+        "👋 Привет! Я кодинг-агент на локальной LLM (Ollama).\n\n"
         "Напишите задачу — я исследую файлы, внесу изменения и проверю их в вашей "
         "персональной рабочей папке.\n\n"
         "📷 Пришлите картинку дизайна/скриншот сайта — свёрстаю его один в один.\n\n"
@@ -261,8 +261,6 @@ async def _run_agent(
 def main() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Не задан TELEGRAM_BOT_TOKEN в .env")
-    if not config.GEMINI_API_KEY:
-        raise SystemExit("Не задан GEMINI_API_KEY в .env")
     if not config.ALLOWED_USER_IDS:
         logger.warning(
             "ALLOWED_USER_IDS пуст — бот отвечает ВСЕМ. Это небезопасно: "
