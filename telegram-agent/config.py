@@ -43,6 +43,23 @@ MAX_TOOL_OUTPUT: int = int(os.getenv("AGENT_MAX_TOOL_OUTPUT", "8000"))
 MAX_DOWNLOAD_BYTES: int = int(os.getenv("AGENT_MAX_DOWNLOAD_MB", "45")) * 1024 * 1024
 
 
+def current_model() -> str:
+    """Имя активной модели в зависимости от провайдера."""
+    return OLLAMA_MODEL if PROVIDER == "ollama" else MODEL
+
+
+def set_model(provider: str | None = None, model: str | None = None) -> None:
+    """Меняет провайдера и/или модель во время работы (для команды /model)."""
+    global PROVIDER, OLLAMA_MODEL, MODEL
+    if provider:
+        PROVIDER = provider.strip().lower()
+    if model:
+        if PROVIDER == "ollama":
+            OLLAMA_MODEL = model.strip()
+        else:
+            MODEL = model.strip()
+
+
 def workspace_for(chat_id: int) -> str:
     """Возвращает (и создаёт) изолированную рабочую папку для чата."""
     path = os.path.join(WORKSPACE_BASE, str(chat_id))

@@ -81,6 +81,10 @@ class Agent:
     def reset(self) -> None:
         self._messages = []
 
+    def rebuild_client(self) -> None:
+        """Пересоздаёт LLM-клиента по текущим настройкам (после смены модели)."""
+        self._client = make_client(self._system, TOOL_SPECS)
+
     def run(self, task: str, images: list[bytes] | None = None) -> Iterator[dict]:
         """Поток событий: assistant, tool_call, tool_result, send_zip, send_file,
         done, error.

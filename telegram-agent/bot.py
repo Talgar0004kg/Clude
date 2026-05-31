@@ -22,6 +22,7 @@ from telegram.ext import (
 import config
 import tools
 from agent import Agent
+from llm import LLMError
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -122,6 +123,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Команды:\n"
         "/zip — прислать файлы архивом\n"
         "/commit — сохранить код в репозиторий\n"
+        "/model — сменить модель/провайдера\n"
         "/reset — очистить контекст диалога\n"
         "/help — помощь"
     )
@@ -154,6 +156,45 @@ async def zip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     await update.effective_chat.send_action(ChatAction.UPLOAD_DOCUMENT)
     await _send_zip(update, update.effective_chat.id)
+
+
+async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать или сменить провайдера/модель без перезапуска бота."""
+    if not config.is_allowed(update.effective_user.id):
+        return
+    args = [a.strip() for a in context.args if a.strip()]
+    if not args:
+        await update.message.reply_text(
+            f"🧠 Сейчас: провайдер *{config.PROVIDER}*, модель *{config.current_model()}*\n\n"
+            "Сменить:\n"
+            "`/model ollama` — локальная модель\n"
+            "`/model gemini` — облако Gemini\n"
+            "`/model llama3.2:3b` — сменить модель текущего провайдера\n"
+            "`/model ollama qwen2.5:7b` — провайдер и модель сразу",
+            parse_mode="Markdown",
+        )
+        return
+
+    provider = model = None
+    if args[0].lower() in ("ollama", "gemini"):
+        provider = args[0].lower()
+        if len(args) > 1:
+            model = args[1]
+    else:
+        model = args[0]
+
+    prev = (config.PROVIDER, config.OLLAMA_MODEL, config.MODEL)
+    config.set_model(provider, model)
+    try:
+        agent = _get_agent(context, update.effective_chat.id)
+        agent.rebuild_client()
+    except LLMError as exc:
+        config.PROVIDER, config.OLLAMA_MODEL, config.MODEL = prev
+        await update.message.reply_text(f"⚠️ Не удалось переключить: {exc}")
+        return
+    await update.message.reply_text(
+        f"✅ Готово: провайдер {config.PROVIDER}, модель {config.current_model()}"
+    )
 
 
 async def commit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -281,6 +322,7 @@ def main() -> None:
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("zip", zip_cmd))
     app.add_handler(CommandHandler("commit", commit_cmd))
+    app.add_handler(CommandHandler("model", model_cmd))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task))
 
