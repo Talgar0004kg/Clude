@@ -7,15 +7,18 @@ cd "$SCRIPT_DIR"
 if [ ! -f .env ]; then
   echo "⚠️  Файл .env не найден. Копирую из .env.example..."
   cp .env.example .env
-  echo "✏️  Впишите LLM_API_KEY в файл .env, затем запустите скрипт снова."
-  exit 1
+  echo "✏️  Шаблон уже настроен на локальную Ollama. При необходимости поправьте .env."
 fi
 
-# Проверяем, что ключ задан
 source .env
-if [ -z "${LLM_API_KEY:-}" ] || [ "$LLM_API_KEY" = "your_gemini_api_key_here" ]; then
-  echo "❌ LLM_API_KEY не задан. Откройте .env и впишите ключ Gemini."
-  exit 1
+
+# Проверяем, что локальный сервер Ollama доступен.
+OLLAMA_CHECK="${LLM_BASE_URL:-http://host.docker.internal:11434}"
+OLLAMA_CHECK="${OLLAMA_CHECK/host.docker.internal/localhost}"
+if ! curl -fsS "$OLLAMA_CHECK/api/tags" >/dev/null 2>&1; then
+  echo "⚠️  Локальный сервер Ollama недоступен ($OLLAMA_CHECK)."
+  echo "    Запустите его в соседней вкладке: 'ollama serve'"
+  echo "    и загрузите модель: 'ollama pull ${LLM_MODEL#ollama/}'"
 fi
 
 echo "🚀 Запускаю OpenHands..."

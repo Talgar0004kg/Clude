@@ -7,7 +7,7 @@
 | Проект | Папка | Описание |
 |--------|-------|----------|
 | Мобильное приложение кыргызского языка | `kel-kel/` | React Native приложение для изучения кыргызского языка |
-| OpenHands AI-агент | `openhands/` | Готовый OpenHands (аналог Devin), подключённый к Google Gemini |
+| OpenHands AI-агент | `openhands/` | Готовый OpenHands (аналог Devin), подключённый к локальной LLM (Ollama) |
 | Telegram Ollama Bot | `telegram-agent/` | Telegram-бот с локальной LLM (Ollama): диалог, память, shell-команды |
 
 ## Быстрый старт
