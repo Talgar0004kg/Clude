@@ -1,5 +1,5 @@
 {
-  "name": "Telegram Gemini Bot (Python)",
+  "name": "Telegram Ollama Bot (Python)",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
   "postCreateCommand": "cd /workspaces/${localWorkspaceFolderBasename}/telegram-agent && pip install -r requirements.txt && cp -n .env.example .env || true",
   "customizations": {

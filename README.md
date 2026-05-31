@@ -8,7 +8,7 @@
 |--------|-------|----------|
 | Мобильное приложение кыргызского языка | `kel-kel/` | React Native приложение для изучения кыргызского языка |
 | OpenHands AI-агент | `openhands/` | Готовый OpenHands (аналог Devin), подключённый к Google Gemini |
-| Telegram Gemini Bot | `telegram-agent/` | Telegram-бот с Gemini AI: диалог, память, shell-команды |
+| Telegram Ollama Bot | `telegram-agent/` | Telegram-бот с локальной LLM (Ollama): диалог, память, shell-команды |
 
 ## Быстрый старт
 
