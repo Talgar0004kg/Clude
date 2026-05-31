@@ -3,3 +3,9 @@ services:
     build: .
     env_file: .env
     restart: unless-stopped
+    volumes:
+      # Сохраняем рабочие папки агента между перезапусками
+      - agent-workspace:/app/workspace
+
+volumes:
+  agent-workspace:

@@ -1,157 +1,183 @@
-"""
-Telegram-бот с Gemini AI агентом.
-Запуск: python bot.py
+"""Телеграм-бот: кодинг-агент на Gemini.
+
+Пользователь пишет задачу в чат → агент исследует/меняет файлы и выполняет
+команды в персональной рабочей папке → шаги приходят обратно в чат.
 """
 import asyncio
 import logging
-import os
-import subprocess
-import sys
-from typing import Optional
+import threading
 
-from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.constants import ChatAction
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-import google.generativeai as genai
-
-load_dotenv()
+import config
+from agent import Agent
 
 logging.basicConfig(
+    format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("telegram-agent")
 
-# ── Конфигурация ──────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN: str = os.environ["TELEGRAM_BOT_TOKEN"]
-GEMINI_API_KEY: str = os.environ["GEMINI_API_KEY"]
-AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gemini-2.5-flash")
-COMMAND_TIMEOUT: int = int(os.getenv("AGENT_COMMAND_TIMEOUT", "120"))
-MAX_STEPS: int = int(os.getenv("AGENT_MAX_STEPS", "25"))
+TG_LIMIT = 4000  # запас до лимита Telegram (4096)
 
-_raw_ids = os.getenv("ALLOWED_USER_IDS", "").strip()
-ALLOWED_USER_IDS: set[int] = (
-    {int(uid.strip()) for uid in _raw_ids.split(",") if uid.strip()}
-    if _raw_ids else set()
-)
-
-# ── Gemini ────────────────────────────────────────────────────
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(AGENT_MODEL)
-
-# ── Вспомогательные функции ───────────────────────────────────
-
-def is_allowed(user_id: int) -> bool:
-    """Проверяет, разрешён ли пользователь."""
-    if not ALLOWED_USER_IDS:
-        return True  # белый список пуст → разрешить всем (не рекомендуется)
-    return user_id in ALLOWED_USER_IDS
+TOOL_LABELS = {
+    "list_files": "📂 list_files",
+    "read_file": "📄 read_file",
+    "write_file": "✏️ write_file",
+    "run_command": "⚙️ run_command",
+}
 
 
-def run_shell(cmd: str, timeout: int = COMMAND_TIMEOUT) -> str:
-    """Выполняет shell-команду и возвращает stdout+stderr."""
-    try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
-        )
-        output = (result.stdout + result.stderr).strip()
-        return output or "(команда выполнена, вывод пуст)"
-    except subprocess.TimeoutExpired:
-        return f"⏱ Таймаут: команда выполнялась дольше {timeout} секунд."
-    except Exception as exc:
-        return f"❌ Ошибка выполнения: {exc}"
+def _get_agent(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> Agent:
+    agent = context.chat_data.get("agent")
+    if agent is None:
+        agent = Agent(config.workspace_for(chat_id))
+        context.chat_data["agent"] = agent
+    return agent
 
 
-async def ask_gemini(prompt: str, history: list[dict]) -> str:
-    """Отправляет запрос в Gemini и возвращает текстовый ответ."""
-    try:
-        chat = model.start_chat(history=history)
-        response = await asyncio.to_thread(chat.send_message, prompt)
-        return response.text
-    except Exception as exc:
-        logger.error("Gemini error: %s", exc)
-        return f"❌ Ошибка Gemini: {exc}"
-
-
-# ── Handlers ──────────────────────────────────────────────────
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Нет доступа.")
+async def _send(update: Update, text: str) -> None:
+    """Отправляет текст, разбивая длинные сообщения на части."""
+    if not text:
         return
-    context.user_data.clear()
+    for i in range(0, len(text), TG_LIMIT):
+        await update.effective_chat.send_message(text[i : i + TG_LIMIT])
+
+
+def _format_event(ev: dict) -> str | None:
+    kind = ev.get("type")
+    if kind == "assistant":
+        return ev["message"]
+    if kind == "tool_call":
+        label = TOOL_LABELS.get(ev["name"], ev["name"])
+        args = ev.get("args", {})
+        detail = args.get("command") or args.get("path") or ""
+        return f"{label}  {detail}".rstrip()
+    if kind == "tool_result":
+        return f"```\n{ev['result']}\n```"
+    if kind == "done":
+        return "✅ Готово"
+    if kind == "error":
+        return f"⚠️ {ev['message']}"
+    return None
+
+
+# --- Команды ---
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not config.is_allowed(update.effective_user.id):
+        await update.message.reply_text(
+            f"⛔ Доступ запрещён. Ваш ID: {update.effective_user.id}\n"
+            "Попросите администратора добавить его в ALLOWED_USER_IDS."
+        )
+        return
     await update.message.reply_text(
-        "👋 Привет! Я Gemini-агент.\n\n"
-        "Просто напишите задачу — я отвечу или выполню команду.\n\n"
+        "👋 Привет! Я кодинг-агент на Gemini.\n\n"
+        "Напишите задачу — я исследую файлы, внесу изменения и проверю их в вашей "
+        "персональной рабочей папке.\n\n"
         "Команды:\n"
-        "/start — начать заново\n"
-        "/clear — очистить историю\n"
-        "/run <команда> — выполнить shell-команду напрямую"
+        "/reset — очистить контекст диалога\n"
+        "/help — помощь"
     )
 
 
-async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Нет доступа.")
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Примеры задач:\n"
+        "• Создай файл hello.py, который печатает «Привет, мир»\n"
+        "• Покажи список файлов\n"
+        "• Напиши функцию факториала и проверь её тестом\n\n"
+        "/reset — начать диалог заново."
+    )
+
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not config.is_allowed(update.effective_user.id):
         return
-    context.user_data.clear()
-    await update.message.reply_text("🗑 История очищена.")
+    agent = context.chat_data.get("agent")
+    if agent:
+        agent.reset()
+    await update.message.reply_text("🔄 Контекст очищен.")
 
 
-async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Нет доступа.")
-        return
-    cmd = " ".join(context.args) if context.args else ""
-    if not cmd:
-        await update.message.reply_text("Использование: /run <команда>")
-        return
-    await update.message.reply_text(f"⚙️ Выполняю: `{cmd}`", parse_mode="Markdown")
-    output = await asyncio.to_thread(run_shell, cmd)
-    # Telegram ограничивает сообщение 4096 символами
-    for chunk in [output[i:i+4000] for i in range(0, len(output), 4000)]:
-        await update.message.reply_text(f"```\n{chunk}\n```", parse_mode="Markdown")
+# --- Обработка задачи ---
 
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not is_allowed(update.effective_user.id):
-        await update.message.reply_text("🚫 Нет доступа.")
+async def handle_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if not config.is_allowed(user_id):
+        await update.message.reply_text(
+            f"⛔ Доступ запрещён. Ваш ID: {user_id}"
+        )
         return
 
-    user_text = update.message.text or ""
-    history: list[dict] = context.user_data.get("history", [])
+    if context.chat_data.get("busy"):
+        await update.message.reply_text("⏳ Дождитесь завершения текущей задачи.")
+        return
 
-    await update.message.chat.send_action("typing")
+    task = update.message.text.strip()
+    if not task:
+        return
 
-    reply = await ask_gemini(user_text, history)
+    agent = _get_agent(context, update.effective_chat.id)
+    context.chat_data["busy"] = True
 
-    # Сохраняем историю (последние MAX_STEPS * 2 сообщений)
-    history.append({"role": "user", "parts": [user_text]})
-    history.append({"role": "model", "parts": [reply]})
-    context.user_data["history"] = history[-(MAX_STEPS * 2):]
+    loop = asyncio.get_event_loop()
+    queue: asyncio.Queue = asyncio.Queue()
 
-    for chunk in [reply[i:i+4000] for i in range(0, len(reply), 4000)]:
-        await update.message.reply_text(chunk)
+    def worker() -> None:
+        try:
+            for event in agent.run(task):
+                loop.call_soon_threadsafe(queue.put_nowait, event)
+        except Exception as exc:  # noqa: BLE001
+            loop.call_soon_threadsafe(
+                queue.put_nowait, {"type": "error", "message": str(exc)}
+            )
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
 
+    threading.Thread(target=worker, daemon=True).start()
 
-# ── Main ──────────────────────────────────────────────────────
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            await update.effective_chat.send_action(ChatAction.TYPING)
+            text = _format_event(event)
+            if text:
+                await _send(update, text)
+    finally:
+        context.chat_data["busy"] = False
+
 
 def main() -> None:
-    if not ALLOWED_USER_IDS:
+    if not config.TELEGRAM_BOT_TOKEN:
+        raise SystemExit("Не задан TELEGRAM_BOT_TOKEN в .env")
+    if not config.GEMINI_API_KEY:
+        raise SystemExit("Не задан GEMINI_API_KEY в .env")
+    if not config.ALLOWED_USER_IDS:
         logger.warning(
-            "⚠️  ALLOWED_USER_IDS не задан — бот доступен всем. "
-            "Рекомендуется указать свой Telegram ID."
+            "ALLOWED_USER_IDS пуст — бот отвечает ВСЕМ. Это небезопасно: "
+            "бот выполняет команды. Укажите свой ID в .env."
         )
 
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("clear", cmd_clear))
-    app.add_handler(CommandHandler("run", cmd_run))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app: Application = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task))
 
-    logger.info("Бот запущен. Модель: %s", AGENT_MODEL)
-    app.run_polling(drop_pending_updates=True)
+    logger.info("Бот запущен. Модель: %s", config.MODEL)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":

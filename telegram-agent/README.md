@@ -1,15 +1,64 @@
-# Telegram Gemini Bot
+# Telegram Agent — кодинг-агент на Gemini
 
-Telegram-бот с Google Gemini AI. Поддерживает диалог с памятью, выполнение shell-команд и белый список пользователей.
+Телеграм-бот, который работает как автономный **кодинг-агент** на **Google
+Gemini**. Пишете задачу в чат — бот сам исследует файлы, вносит изменения и
+выполняет команды в персональной рабочей папке, присылая каждый шаг обратно.
+
+```
+Telegram ──► бот (python-telegram-bot) ──► Gemini API
+                  │
+                  ▼
+        инструменты в рабочей папке (песочница)
+   list_files · read_file · write_file · run_command
+```
+
+> Для каждого чата создаётся **отдельная** папка `workspace/<chat_id>` — модель
+> сама решает, какие инструменты вызвать, и не выходит за её пределы.
+
+## Структура
+
+```
+telegram-agent/
+├── bot.py        # телеграм-бот, стрим шагов агента в чат
+├── agent.py      # цикл агента на Gemini (вызов инструментов)
+├── tools.py      # инструменты: файлы + команды, песочница на чат
+├── config.py     # настройки из .env
+├── requirements.txt
+├── Dockerfile · docker-compose.yml · run.sh
+└── .devcontainer/  # для GitHub Codespaces
+```
 
 ## Быстрый старт
 
 ```bash
 cd telegram-agent
-cp .env.example .env
-# Заполните .env (токен бота, ключ Gemini, свой Telegram ID)
+cp .env.example .env     # впишите токены и свой Telegram ID
 ./run.sh
 ```
+Затем откройте бота в Телеграме и напишите `/start`.
+
+## Запуск через Docker
+
+```bash
+cd telegram-agent
+cp .env.example .env      # заполните .env
+docker compose up --build
+```
+
+## Запуск в GitHub Codespaces
+
+1. **Code → Codespaces → New codespace** (Dev Container из `telegram-agent/.devcontainer`).
+2. Зависимости установятся автоматически.
+3. Впишите токены в `.env` и запустите `python bot.py`.
+
+## Команды бота
+
+| Команда | Действие |
+|---------|----------|
+| `/start` | приветствие |
+| `/help` | примеры задач |
+| `/reset` | очистить контекст диалога |
+| любой текст | задача для агента |
 
 ## Переменные окружения (`.env`)
 
@@ -17,42 +66,18 @@ cp .env.example .env
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | ✅ | Токен от @BotFather |
 | `GEMINI_API_KEY` | ✅ | Ключ Gemini (https://aistudio.google.com/app/apikey) |
-| `ALLOWED_USER_IDS` | ⚠️ рекомендуется | Ваш Telegram ID (узнать у @userinfobot). Несколько через запятую. Пусто = доступ для всех |
+| `ALLOWED_USER_IDS` | ⚠️ рекомендуется | Ваш Telegram ID (у @userinfobot). Несколько — через запятую. Пусто = все |
 | `AGENT_MODEL` | нет | Модель Gemini (по умолчанию `gemini-2.5-flash`) |
-| `AGENT_COMMAND_TIMEOUT` | нет | Таймаут shell-команд в секундах (по умолчанию `120`) |
-| `AGENT_MAX_STEPS` | нет | Глубина памяти диалога (по умолчанию `25`) |
+| `AGENT_WORKSPACE` | нет | Базовая рабочая папка (по умолчанию `./workspace`) |
+| `AGENT_COMMAND_TIMEOUT` | нет | Таймаут команды, сек (по умолчанию `120`) |
+| `AGENT_MAX_STEPS` | нет | Лимит шагов агента на задачу (по умолчанию `25`) |
 
-## Запуск через Docker
+## ⚠️ Безопасность
 
-```bash
-cd telegram-agent
-cp .env.example .env   # заполните .env
-docker compose up --build
-```
-
-## Запуск в GitHub Codespaces
-
-1. **Code → Codespaces → New codespace** (Dev Container из `telegram-agent/.devcontainer`).
-2. Зависимости установятся автоматически при создании контейнера.
-3. Откройте `.env`, вставьте токены.
-4. В терминале:
-   ```bash
-   cd telegram-agent
-   python bot.py
-   ```
-
-## Команды бота
-
-| Команда | Описание |
-|---|---|
-| `/start` | Начать / сбросить историю |
-| `/clear` | Очистить историю диалога |
-| `/run <cmd>` | Выполнить shell-команду |
-| *(любой текст)* | Ответ Gemini с памятью контекста |
-
-## Безопасность
-
-- **Никогда не коммитьте `.env`** — добавлен в `.gitignore`.
-- Обязательно заполните `ALLOWED_USER_IDS` — иначе бот ответит любому.
-- Команда `/run` выполняет произвольный код — доверяйте только себе.
-- После публикации токенов в открытом виде — перевыпустите их: `/revoke` у @BotFather и удалите ключ на aistudio.google.com.
+- Бот **выполняет команды** (в песочнице рабочей папки). Обязательно заполните
+  `ALLOWED_USER_IDS`, иначе бот ответит любому.
+- Запускайте в изолированной среде (контейнер/Codespaces), не на машине с важными
+  данными.
+- **Никогда не коммитьте `.env`** — он в `.gitignore`.
+- Если токены засветились — перевыпустите: `/revoke` у @BotFather и новый ключ на
+  aistudio.google.com.
