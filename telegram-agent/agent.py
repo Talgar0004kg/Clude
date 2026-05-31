@@ -1,4 +1,6 @@
 """Ядро агента: цикл «Gemini → инструменты → результат» для одного чата."""
+import glob
+import os
 from typing import Iterator
 
 from google import genai
@@ -6,6 +8,26 @@ from google.genai import types
 
 import config
 import tools
+
+
+def _load_skills() -> str:
+    """Подмешивает в системный промпт все скиллы из папки skills/*.md
+    (кроме служебного README). Так качество работы повышается без правки кода."""
+    base = os.path.join(os.path.dirname(__file__), "skills")
+    if not os.path.isdir(base):
+        return ""
+    parts: list[str] = []
+    for path in sorted(glob.glob(os.path.join(base, "*.md"))):
+        if os.path.basename(path).lower() == "readme.md":
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                parts.append(f.read().strip())
+        except OSError:
+            continue
+    if not parts:
+        return ""
+    return "\n\n# ПОДКЛЮЧЁННЫЕ СКИЛЛЫ\n\n" + "\n\n---\n\n".join(parts)
 
 SYSTEM_PROMPT = """\
 Ты — кодинг-агент в Телеграме, по духу похожий на Devin AI.
@@ -179,13 +201,14 @@ class Agent:
         self._tools = _build_tools()
         self._workspace = workspace
         self._contents: list = []
+        self._system = SYSTEM_PROMPT + _load_skills()
 
     def reset(self) -> None:
         self._contents = []
 
     def _config(self) -> types.GenerateContentConfig:
         return types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+            system_instruction=self._system,
             tools=self._tools,
             temperature=0.2,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
