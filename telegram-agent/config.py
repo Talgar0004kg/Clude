@@ -32,6 +32,9 @@ COMMAND_TIMEOUT: int = int(os.getenv("AGENT_COMMAND_TIMEOUT", "120"))
 MAX_STEPS: int = int(os.getenv("AGENT_MAX_STEPS", "25"))
 MAX_TOOL_OUTPUT: int = int(os.getenv("AGENT_MAX_TOOL_OUTPUT", "8000"))
 
+# Максимальный размер скачиваемого файла (Telegram отдаёт документы до ~50 МБ).
+MAX_DOWNLOAD_BYTES: int = int(os.getenv("AGENT_MAX_DOWNLOAD_MB", "45")) * 1024 * 1024
+
 
 def workspace_for(chat_id: int) -> str:
     """Возвращает (и создаёт) изолированную рабочую папку для чата."""

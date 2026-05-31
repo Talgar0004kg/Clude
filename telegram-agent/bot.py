@@ -5,6 +5,7 @@
 """
 import asyncio
 import logging
+import os
 import threading
 
 from telegram import Update
@@ -37,6 +38,9 @@ TOOL_LABELS = {
     "run_command": "⚙️ run_command",
     "fetch_url": "🌐 fetch_url",
     "download_site": "⬇️ download_site",
+    "web_search": "🔎 web_search",
+    "download_file": "📥 download_file",
+    "send_file": "📤 send_file",
     "send_files": "📦 send_files",
     "git_commit": "💾 git_commit",
 }
@@ -52,6 +56,18 @@ async def _send_zip(update: Update, chat_id: int) -> None:
         return
     with open(archive, "rb") as f:
         await update.effective_chat.send_document(f, filename="site.zip")
+
+
+async def _send_file(update: Update, chat_id: int, rel_path: str) -> None:
+    """Отправляет конкретный файл из рабочей папки чата (с реальным типом/именем)."""
+    workspace = config.workspace_for(chat_id)
+    target = os.path.abspath(os.path.join(workspace, rel_path))
+    if not (target == workspace or target.startswith(workspace + os.sep)) \
+            or not os.path.isfile(target):
+        await update.effective_chat.send_message(f"⚠️ Файл не найден: {rel_path}")
+        return
+    with open(target, "rb") as f:
+        await update.effective_chat.send_document(f, filename=os.path.basename(target))
 
 
 def _get_agent(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> Agent:
@@ -77,7 +93,8 @@ def _format_event(ev: dict) -> str | None:
     if kind == "tool_call":
         label = TOOL_LABELS.get(ev["name"], ev["name"])
         args = ev.get("args", {})
-        detail = args.get("command") or args.get("url") or args.get("path") or ""
+        detail = (args.get("command") or args.get("query") or args.get("url")
+                  or args.get("path") or "")
         return f"{label}  {detail}".rstrip()
     if kind == "tool_result":
         return f"```\n{ev['result']}\n```"
@@ -230,6 +247,9 @@ async def _run_agent(
             await update.effective_chat.send_action(ChatAction.TYPING)
             if event.get("type") == "send_zip":
                 await _send_zip(update, update.effective_chat.id)
+                continue
+            if event.get("type") == "send_file":
+                await _send_file(update, update.effective_chat.id, event.get("path", ""))
                 continue
             text = _format_event(event)
             if text:

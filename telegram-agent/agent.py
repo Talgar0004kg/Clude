@@ -29,6 +29,10 @@ SYSTEM_PROMPT = """\
 - Чтобы зайти на сайт и проанализировать его — используй fetch_url. Чтобы скачать
   сайт (страницу с ресурсами) для последующей отправки — используй download_site,
   затем при просьбе вызови send_files.
+- Если пользователь просит НАЙТИ что-то (фото, книгу, приложение, файл, песню) —
+  сначала web_search, при необходимости открой страницу через fetch_url, чтобы
+  найти прямую ссылку на файл, затем download_file, и в конце send_file, чтобы
+  отправить пользователю настоящий файл (с правильным расширением).
 
 Правила:
 - Отвечай на языке пользователя (обычно по-русски), коротко и по делу — это чат.
@@ -105,6 +109,38 @@ def _build_tools() -> list:
                             ),
                         },
                         ["url"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="web_search",
+                    description="Найти что-либо в интернете (фото, книгу, "
+                    "приложение, файл, информацию). Возвращает список ссылок.",
+                    parameters=sch(
+                        {"query": types.Schema(type=s, description="Поисковый запрос")},
+                        ["query"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="download_file",
+                    description="Скачать файл по прямой ссылке (любого типа: "
+                    "jpg, png, pdf, mp3, apk, zip и т.д.) в рабочую папку.",
+                    parameters=sch(
+                        {
+                            "url": types.Schema(type=s, description="Прямая ссылка на файл"),
+                            "filename": types.Schema(
+                                type=s, description="Имя файла (необязательно)"
+                            ),
+                        },
+                        ["url"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="send_file",
+                    description="Отправить пользователю в чат конкретный файл из "
+                    "рабочей папки (любого типа, не только zip), сохраняя расширение.",
+                    parameters=sch(
+                        {"path": types.Schema(type=s, description="Путь к файлу")},
+                        ["path"],
                     ),
                 ),
                 types.FunctionDeclaration(
@@ -202,6 +238,10 @@ class Agent:
                     # Отправку архива выполняет сам бот (у него есть доступ к чату).
                     yield {"type": "send_zip"}
                     result = "Архив с файлами отправлен пользователю в чат."
+                elif call.name == "send_file":
+                    path = args.get("path", "")
+                    yield {"type": "send_file", "path": path}
+                    result = f"Файл '{path}' отправлен пользователю в чат."
                 elif call.name == "git_commit":
                     result = tools.git_commit(
                         self._workspace, args.get("message") or "update from telegram agent"

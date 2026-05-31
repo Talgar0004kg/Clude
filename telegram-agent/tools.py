@@ -1,5 +1,6 @@
 """Инструменты агента: файлы и команды, ограниченные рабочей папкой чата."""
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -169,6 +170,101 @@ def download_site(workspace: str, url: str, dest: str = "site") -> str:
     return msg
 
 
+# --- Поиск и скачивание файлов ---
+
+
+class _SearchParser(HTMLParser):
+    """Парсит результаты поиска DuckDuckGo (html-версия)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[tuple[str, str]] = []
+        self._in = False
+        self._href = ""
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            d = dict(attrs)
+            if "result__a" in (d.get("class") or ""):
+                self._in = True
+                self._href = d.get("href") or ""
+                self._text = []
+
+    def handle_data(self, data):
+        if self._in:
+            self._text.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._in:
+            self._in = False
+            real = self._href
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(self._href).query)
+            if "uddg" in params:
+                real = params["uddg"][0]
+            title = "".join(self._text).strip()
+            if title and real:
+                self.results.append((title, real))
+
+
+def web_search(workspace: str, query: str, max_results: int = 8) -> str:
+    """Ищет в интернете (DuckDuckGo) и возвращает список «название + ссылка»."""
+    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
+    try:
+        html = _http_get(url)
+    except Exception as exc:  # noqa: BLE001
+        raise ToolError(f"Ошибка поиска: {exc}")
+    parser = _SearchParser()
+    parser.feed(html)
+    if not parser.results:
+        return "Ничего не найдено."
+    try:
+        limit = int(max_results)
+    except (TypeError, ValueError):
+        limit = 8
+    lines = [
+        f"{i + 1}. {title}\n   {link}"
+        for i, (title, link) in enumerate(parser.results[: max(1, limit)])
+    ]
+    return "\n".join(lines)
+
+
+def _safe_filename(name: str) -> str:
+    name = os.path.basename(name.split("?")[0]) or "download"
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    return name[:120] or "download"
+
+
+def download_file(workspace: str, url: str, filename: str = "") -> str:
+    """Скачивает файл по URL (любого типа) в рабочую папку."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+            if not filename:
+                cd = resp.headers.get("Content-Disposition", "")
+                m = re.search(r'filename="?([^"\;]+)"?', cd)
+                if m:
+                    filename = m.group(1)
+            if not filename:
+                filename = os.path.basename(urllib.parse.urlparse(url).path)
+            data = resp.read(config.MAX_DOWNLOAD_BYTES + 1)
+    except Exception as exc:  # noqa: BLE001
+        raise ToolError(f"Не удалось скачать {url}: {exc}")
+
+    if len(data) > config.MAX_DOWNLOAD_BYTES:
+        mb = config.MAX_DOWNLOAD_BYTES // (1024 * 1024)
+        raise ToolError(f"Файл больше {mb} МБ — нельзя отправить в Telegram.")
+
+    filename = _safe_filename(filename or "download")
+    target = _resolve(workspace, filename)
+    with open(target, "wb") as f:
+        f.write(data)
+    return (f"Файл '{filename}' скачан ({len(data)} байт). "
+            f"Чтобы отправить пользователю — вызови send_file с path='{filename}'.")
+
+
 TOOL_FUNCTIONS = {
     "list_files": list_files,
     "read_file": read_file,
@@ -176,6 +272,8 @@ TOOL_FUNCTIONS = {
     "run_command": run_command,
     "fetch_url": fetch_url,
     "download_site": download_site,
+    "web_search": web_search,
+    "download_file": download_file,
 }
 
 
