@@ -1,0 +1,33 @@
+# Запуск готового OpenHands (open-source аналог Devin) с подключением к Gemini.
+# Используется опубликованный образ — собирать ничего не нужно.
+#
+#   docker compose up      # запустить
+#   docker compose down     # остановить
+#
+# Веб-интерфейс: http://localhost:3000
+
+services:
+  openhands:
+    image: docker.openhands.dev/openhands/openhands:${OPENHANDS_VERSION:-latest}
+    container_name: openhands-app
+    pull_policy: always
+    stdin_open: true
+    tty: true
+    ports:
+      - "${OPENHANDS_PORT:-3000}:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # OpenHands запускает изолированную среду исполнения в отдельном контейнере.
+      AGENT_SERVER_IMAGE_REPOSITORY: ${AGENT_SERVER_IMAGE_REPOSITORY:-ghcr.io/openhands/agent-server}
+      AGENT_SERVER_IMAGE_TAG: ${AGENT_SERVER_IMAGE_TAG:-1.19.1-python}
+      LOG_ALL_EVENTS: "true"
+      # Подключение к Gemini (можно также задать в UI → Settings).
+      LLM_MODEL: ${LLM_MODEL:-gemini/gemini-2.5-flash}
+      LLM_API_KEY: ${LLM_API_KEY}
+    volumes:
+      # Доступ к Docker для запуска песочницы исполнения.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Сохранение настроек, истории и состояния между перезапусками.
+      - ~/.openhands:/.openhands
+    restart: unless-stopped
