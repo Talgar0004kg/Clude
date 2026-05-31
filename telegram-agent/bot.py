@@ -19,6 +19,7 @@ from telegram.ext import (
 )
 
 import config
+import tools
 from agent import Agent
 
 logging.basicConfig(
@@ -34,7 +35,21 @@ TOOL_LABELS = {
     "read_file": "📄 read_file",
     "write_file": "✏️ write_file",
     "run_command": "⚙️ run_command",
+    "send_files": "📦 send_files",
+    "git_commit": "💾 git_commit",
 }
+
+
+async def _send_zip(update: Update, chat_id: int) -> None:
+    """Упаковывает рабочую папку чата в zip и отправляет документом."""
+    archive = await asyncio.to_thread(tools.make_zip, config.workspace_for(chat_id))
+    if archive is None:
+        await update.effective_chat.send_message(
+            "📭 Пока нечего отправлять — рабочая папка пуста."
+        )
+        return
+    with open(archive, "rb") as f:
+        await update.effective_chat.send_document(f, filename="site.zip")
 
 
 def _get_agent(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> Agent:
@@ -85,6 +100,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Напишите задачу — я исследую файлы, внесу изменения и проверю их в вашей "
         "персональной рабочей папке.\n\n"
         "Команды:\n"
+        "/zip — прислать файлы архивом\n"
+        "/commit — сохранить код в репозиторий\n"
         "/reset — очистить контекст диалога\n"
         "/help — помощь"
     )
@@ -95,8 +112,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Примеры задач:\n"
         "• Создай файл hello.py, который печатает «Привет, мир»\n"
         "• Покажи список файлов\n"
-        "• Напиши функцию факториала и проверь её тестом\n\n"
-        "/reset — начать диалог заново."
+        "• Напиши функцию факториала и проверь её тестом\n"
+        "• Пришли мне zip с сайтом · Сохрани код в репозиторий\n\n"
+        "Команды: /zip — архив файлов, /commit — сохранить в git, "
+        "/reset — начать заново."
     )
 
 
@@ -107,6 +126,25 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if agent:
         agent.reset()
     await update.message.reply_text("🔄 Контекст очищен.")
+
+
+async def zip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Прислать zip с файлами рабочей папки."""
+    if not config.is_allowed(update.effective_user.id):
+        return
+    await update.effective_chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+    await _send_zip(update, update.effective_chat.id)
+
+
+async def commit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Закоммитить рабочую папку в репозиторий (и запушить)."""
+    if not config.is_allowed(update.effective_user.id):
+        return
+    message = " ".join(context.args) if context.args else "update from telegram agent"
+    await update.effective_chat.send_action(ChatAction.TYPING)
+    workspace = config.workspace_for(update.effective_chat.id)
+    result = await asyncio.to_thread(tools.git_commit, workspace, message)
+    await _send(update, result)
 
 
 # --- Обработка задачи ---
@@ -152,6 +190,9 @@ async def handle_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if event is None:
                 break
             await update.effective_chat.send_action(ChatAction.TYPING)
+            if event.get("type") == "send_zip":
+                await _send_zip(update, update.effective_chat.id)
+                continue
             text = _format_event(event)
             if text:
                 await _send(update, text)
@@ -174,6 +215,8 @@ def main() -> None:
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("zip", zip_cmd))
+    app.add_handler(CommandHandler("commit", commit_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task))
 
     logger.info("Бот запущен. Модель: %s", config.MODEL)

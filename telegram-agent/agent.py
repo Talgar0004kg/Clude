@@ -18,6 +18,12 @@ SYSTEM_PROMPT = """\
 3. Проверяй результат командами/тестами (run_command).
 4. При ошибках — анализируй вывод и исправляй.
 
+Дополнительные действия:
+- Если пользователь просит прислать/скачать файлы, готовый сайт, архив или zip —
+  вызови инструмент send_files (он отправит zip с рабочей папкой прямо в чат).
+- Если пользователь просит сохранить/закоммитить код в репозиторий — вызови
+  git_commit с осмысленным сообщением коммита.
+
 Правила:
 - Отвечай на языке пользователя (обычно по-русски), коротко и по делу — это чат.
 - Не выдумывай содержимое файлов, сначала читай их.
@@ -69,6 +75,27 @@ def _build_tools() -> list:
                     parameters=sch(
                         {"command": types.Schema(type=s, description="Команда")},
                         ["command"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="send_files",
+                    description="Упаковать рабочую папку в zip и отправить её "
+                    "пользователю в чат. Вызывай, когда просят прислать/скачать "
+                    "файлы, готовый сайт или архив.",
+                    parameters=sch({}, []),
+                ),
+                types.FunctionDeclaration(
+                    name="git_commit",
+                    description="Закоммитить рабочую папку с кодом в git-репозиторий "
+                    "(и отправить на GitHub). Вызывай, когда просят сохранить или "
+                    "закоммитить результат.",
+                    parameters=sch(
+                        {
+                            "message": types.Schema(
+                                type=s, description="Сообщение коммита"
+                            )
+                        },
+                        [],
                     ),
                 ),
             ]
@@ -134,8 +161,20 @@ class Agent:
             for call in calls:
                 args = dict(call.args or {})
                 yield {"type": "tool_call", "name": call.name, "args": args}
-                result = tools.execute(call.name, args, self._workspace)
-                yield {"type": "tool_result", "name": call.name, "result": result}
+
+                if call.name == "send_files":
+                    # Отправку архива выполняет сам бот (у него есть доступ к чату).
+                    yield {"type": "send_zip"}
+                    result = "Архив с файлами отправлен пользователю в чат."
+                elif call.name == "git_commit":
+                    result = tools.git_commit(
+                        self._workspace, args.get("message") or "update from telegram agent"
+                    )
+                    yield {"type": "tool_result", "name": call.name, "result": result}
+                else:
+                    result = tools.execute(call.name, args, self._workspace)
+                    yield {"type": "tool_result", "name": call.name, "result": result}
+
                 response_parts.append(
                     types.Part.from_function_response(
                         name=call.name, response={"result": result}

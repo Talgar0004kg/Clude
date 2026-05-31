@@ -1,6 +1,8 @@
 """Инструменты агента: файлы и команды, ограниченные рабочей папкой чата."""
 import os
+import shutil
 import subprocess
+import tempfile
 
 import config
 
@@ -92,3 +94,72 @@ def execute(name: str, args: dict, workspace: str) -> str:
         return f"Ошибка аргументов '{name}': {exc}"
     except Exception as exc:  # noqa: BLE001
         return f"Непредвиденная ошибка '{name}': {exc}"
+
+
+# --- Доставка результата и сохранение в git ---
+
+
+def make_zip(workspace: str) -> str | None:
+    """Упаковывает содержимое рабочей папки в zip. Возвращает путь к архиву
+    или None, если папка пуста/не существует."""
+    if not os.path.isdir(workspace) or not os.listdir(workspace):
+        return None
+    tmp_dir = tempfile.mkdtemp()
+    base = os.path.join(tmp_dir, "site")
+    archive = shutil.make_archive(base, "zip", root_dir=workspace)
+    return archive
+
+
+def _find_repo_root(start: str) -> str | None:
+    """Идёт вверх от start в поисках папки с .git."""
+    path = os.path.abspath(start)
+    while True:
+        if os.path.isdir(os.path.join(path, ".git")):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return None
+        path = parent
+
+
+def git_commit(workspace: str, message: str = "update from telegram agent") -> str:
+    """Коммитит рабочую папку в git-репозиторий и пытается запушить.
+
+    Папка агента может быть в .gitignore, поэтому используем add -f.
+    """
+    root = _find_repo_root(workspace)
+    if root is None:
+        return ("Ошибка: git-репозиторий не найден. Файлы сохранены только в "
+                "рабочей папке.")
+    if not os.path.isdir(workspace) or not os.listdir(workspace):
+        return "Рабочая папка пуста — коммитить нечего."
+
+    rel = os.path.relpath(workspace, root)
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", root, *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+    git("add", "-f", rel)
+    commit = git(
+        "-c", "user.name=Telegram Agent",
+        "-c", "user.email=agent@example.com",
+        "-c", "commit.gpgsign=false",
+        "commit", "-m", message,
+    )
+    out = (commit.stdout + commit.stderr).strip()
+    if commit.returncode != 0 and "nothing to commit" in out:
+        return "Нет изменений для коммита."
+    if commit.returncode != 0:
+        return f"Не удалось закоммитить:\n{out}"
+
+    push = git("push")
+    push_out = (push.stdout + push.stderr).strip()
+    if push.returncode == 0:
+        return f"✅ Закоммичено и отправлено в репозиторий.\n{out}"
+    return (f"✅ Закоммичено локально (push не удался — возможно, нет доступа):\n"
+            f"{out}\n\npush: {push_out}")
