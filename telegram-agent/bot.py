@@ -99,6 +99,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "👋 Привет! Я кодинг-агент на Gemini.\n\n"
         "Напишите задачу — я исследую файлы, внесу изменения и проверю их в вашей "
         "персональной рабочей папке.\n\n"
+        "📷 Пришлите картинку дизайна/скриншот сайта — свёрстаю его один в один.\n\n"
         "Команды:\n"
         "/zip — прислать файлы архивом\n"
         "/commit — сохранить код в репозиторий\n"
@@ -150,19 +151,54 @@ async def commit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # --- Обработка задачи ---
 
 async def handle_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    if not config.is_allowed(user_id):
+    if not config.is_allowed(update.effective_user.id):
         await update.message.reply_text(
-            f"⛔ Доступ запрещён. Ваш ID: {user_id}"
+            f"⛔ Доступ запрещён. Ваш ID: {update.effective_user.id}"
+        )
+        return
+    task = (update.message.text or "").strip()
+    if not task:
+        return
+    await _run_agent(update, context, task)
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Пользователь прислал картинку (дизайн/скриншот) — верстаем сайт по ней."""
+    if not config.is_allowed(update.effective_user.id):
+        await update.message.reply_text(
+            f"⛔ Доступ запрещён. Ваш ID: {update.effective_user.id}"
         )
         return
 
-    if context.chat_data.get("busy"):
-        await update.message.reply_text("⏳ Дождитесь завершения текущей задачи.")
+    # Берём самое крупное фото или картинку-документ.
+    images: list[bytes] = []
+    if update.message.photo:
+        tg_file = await update.message.photo[-1].get_file()
+        images.append(bytes(await tg_file.download_as_bytearray()))
+    elif update.message.document and (update.message.document.mime_type or "").startswith("image/"):
+        tg_file = await update.message.document.get_file()
+        images.append(bytes(await tg_file.download_as_bytearray()))
+    else:
         return
 
-    task = update.message.text.strip()
-    if not task:
+    caption = (update.message.caption or "").strip()
+    task = caption or (
+        "Свёрстай сайт один в один по этому изображению: создай index.html, "
+        "style.css и при необходимости script.js. Точно повтори структуру, "
+        "расположение, цвета, шрифты и тексты."
+    )
+    await _run_agent(update, context, task, images=images)
+
+
+async def _run_agent(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    task: str,
+    images: list[bytes] | None = None,
+) -> None:
+    """Запускает агента и стримит шаги в чат."""
+    if context.chat_data.get("busy"):
+        await update.message.reply_text("⏳ Дождитесь завершения текущей задачи.")
         return
 
     agent = _get_agent(context, update.effective_chat.id)
@@ -173,7 +209,7 @@ async def handle_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     def worker() -> None:
         try:
-            for event in agent.run(task):
+            for event in agent.run(task, images=images):
                 loop.call_soon_threadsafe(queue.put_nowait, event)
         except Exception as exc:  # noqa: BLE001
             loop.call_soon_threadsafe(
@@ -217,6 +253,7 @@ def main() -> None:
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("zip", zip_cmd))
     app.add_handler(CommandHandler("commit", commit_cmd))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task))
 
     logger.info("Бот запущен. Модель: %s", config.MODEL)

@@ -23,6 +23,9 @@ SYSTEM_PROMPT = """\
   вызови инструмент send_files (он отправит zip с рабочей папкой прямо в чат).
 - Если пользователь просит сохранить/закоммитить код в репозиторий — вызови
   git_commit с осмысленным сообщением коммита.
+- Если пользователь прислал изображение (дизайн/скриншот сайта) — свёрстай сайт
+  «один в один»: максимально точно повтори структуру, расположение блоков, цвета,
+  шрифты и тексты с картинки, используя HTML/CSS (и JS при необходимости).
 
 Правила:
 - Отвечай на языке пользователя (обычно по-русски), коротко и по делу — это чат.
@@ -125,9 +128,15 @@ class Agent:
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
-    def run(self, task: str) -> Iterator[dict]:
-        """Поток событий: assistant, tool_call, tool_result, done, error."""
-        self._contents.append(types.Content(role="user", parts=[types.Part(text=task)]))
+    def run(self, task: str, images: list[bytes] | None = None) -> Iterator[dict]:
+        """Поток событий: assistant, tool_call, tool_result, done, error.
+
+        images — список изображений (например, дизайн сайта) в байтах (JPEG/PNG).
+        """
+        parts = [types.Part(text=task)]
+        for img in images or []:
+            parts.append(types.Part.from_bytes(data=img, mime_type="image/jpeg"))
+        self._contents.append(types.Content(role="user", parts=parts))
 
         for _ in range(config.MAX_STEPS):
             try:
