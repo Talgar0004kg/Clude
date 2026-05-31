@@ -1,4 +1,4 @@
-"""Телеграм-бот: кодинг-агент на Gemini.
+"""Телеграм-бот: кодинг-агент на локальной модели (Ollama).
 
 Пользователь пишет задачу в чат → агент исследует/меняет файлы и выполняет
 команды в персональной рабочей папке → шаги приходят обратно в чат.
@@ -116,7 +116,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
     await update.message.reply_text(
-        "👋 Привет! Я кодинг-агент на Gemini.\n\n"
+        "👋 Привет! Я локальный кодинг-агент (Ollama).\n\n"
         "Напишите задачу — я исследую файлы, внесу изменения и проверю их в вашей "
         "персональной рабочей папке.\n\n"
         "📷 Пришлите картинку дизайна/скриншот сайта — свёрстаю его один в один.\n\n"
@@ -165,36 +165,26 @@ async def model_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = [a.strip() for a in context.args if a.strip()]
     if not args:
         await update.message.reply_text(
-            f"🧠 Сейчас: провайдер *{config.PROVIDER}*, модель *{config.current_model()}*\n\n"
+            f"🧠 Текущая локальная модель: *{config.current_model()}*\n\n"
             "Сменить:\n"
-            "`/model ollama` — локальная модель\n"
-            "`/model gemini` — облако Gemini\n"
-            "`/model llama3.2:3b` — сменить модель текущего провайдера\n"
-            "`/model ollama qwen2.5:7b` — провайдер и модель сразу",
+            "`/model llama3.2:3b`\n"
+            "`/model qwen2.5:7b`\n"
+            "`/model llama3.1:8b`\n\n"
+            "Модель должна быть скачана: `ollama pull <модель>`",
             parse_mode="Markdown",
         )
         return
 
-    provider = model = None
-    if args[0].lower() in ("ollama", "gemini"):
-        provider = args[0].lower()
-        if len(args) > 1:
-            model = args[1]
-    else:
-        model = args[0]
-
-    prev = (config.PROVIDER, config.OLLAMA_MODEL, config.MODEL)
-    config.set_model(provider, model)
+    prev = config.OLLAMA_MODEL
+    config.set_model(args[0])
     try:
         agent = _get_agent(context, update.effective_chat.id)
         agent.rebuild_client()
     except LLMError as exc:
-        config.PROVIDER, config.OLLAMA_MODEL, config.MODEL = prev
+        config.set_model(prev)
         await update.message.reply_text(f"⚠️ Не удалось переключить: {exc}")
         return
-    await update.message.reply_text(
-        f"✅ Готово: провайдер {config.PROVIDER}, модель {config.current_model()}"
-    )
+    await update.message.reply_text(f"✅ Модель: {config.current_model()}")
 
 
 async def commit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -302,14 +292,11 @@ async def _run_agent(
 def main() -> None:
     if not config.TELEGRAM_BOT_TOKEN:
         raise SystemExit("Не задан TELEGRAM_BOT_TOKEN в .env")
-    if config.PROVIDER == "gemini" and not config.GEMINI_API_KEY:
-        raise SystemExit("AGENT_PROVIDER=gemini, но не задан GEMINI_API_KEY в .env")
-    if config.PROVIDER == "ollama":
-        logger.info(
-            "LLM: Ollama (%s, модель %s). Убедитесь, что запущен 'ollama serve'.",
-            config.OLLAMA_HOST,
-            config.OLLAMA_MODEL,
-        )
+    logger.info(
+        "LLM: локальная Ollama (%s, модель %s). Нужен запущенный 'ollama serve'.",
+        config.OLLAMA_HOST,
+        config.OLLAMA_MODEL,
+    )
     if not config.ALLOWED_USER_IDS:
         logger.warning(
             "ALLOWED_USER_IDS пуст — бот отвечает ВСЕМ. Это небезопасно: "
@@ -326,8 +313,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_task))
 
-    active_model = config.OLLAMA_MODEL if config.PROVIDER == "ollama" else config.MODEL
-    logger.info("Бот запущен. Провайдер: %s, модель: %s", config.PROVIDER, active_model)
+    logger.info("Бот запущен. Локальная модель: %s", config.OLLAMA_MODEL)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

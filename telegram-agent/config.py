@@ -21,14 +21,7 @@ def _parse_ids(raw: str) -> set[int]:
 # Разрешённые пользователи (пустой набор = разрешено всем).
 ALLOWED_USER_IDS: set[int] = _parse_ids(os.getenv("ALLOWED_USER_IDS", ""))
 
-# Gemini
-GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
-MODEL: str = os.getenv("AGENT_MODEL", "gemini-2.5-flash").strip()
-
-# Провайдер LLM: "ollama" (локально) или "gemini" (облако).
-PROVIDER: str = os.getenv("AGENT_PROVIDER", "ollama").strip().lower()
-
-# Ollama (локальный сервер в Codespaces).
+# Локальная модель через Ollama.
 OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://localhost:11434").strip()
 OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b").strip()
 
@@ -44,20 +37,15 @@ MAX_DOWNLOAD_BYTES: int = int(os.getenv("AGENT_MAX_DOWNLOAD_MB", "45")) * 1024 *
 
 
 def current_model() -> str:
-    """Имя активной модели в зависимости от провайдера."""
-    return OLLAMA_MODEL if PROVIDER == "ollama" else MODEL
+    """Имя активной локальной модели."""
+    return OLLAMA_MODEL
 
 
-def set_model(provider: str | None = None, model: str | None = None) -> None:
-    """Меняет провайдера и/или модель во время работы (для команды /model)."""
-    global PROVIDER, OLLAMA_MODEL, MODEL
-    if provider:
-        PROVIDER = provider.strip().lower()
+def set_model(model: str | None = None) -> None:
+    """Меняет локальную модель во время работы (для команды /model)."""
+    global OLLAMA_MODEL
     if model:
-        if PROVIDER == "ollama":
-            OLLAMA_MODEL = model.strip()
-        else:
-            MODEL = model.strip()
+        OLLAMA_MODEL = model.strip()
 
 
 def workspace_for(chat_id: int) -> str:

@@ -6,8 +6,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Код агента (бот + ядро агента + инструменты + конфиг)
-COPY bot.py agent.py tools.py config.py ./
+# Код агента
+COPY bot.py agent.py llm.py tool_specs.py tools.py config.py ./
+COPY skills ./skills
 
 # .env монтируется снаружи, не копируем
 CMD ["python", "bot.py"]
