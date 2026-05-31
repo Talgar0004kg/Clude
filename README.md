@@ -8,13 +8,18 @@
 |--------|-------|----------|
 | Мобильное приложение кыргызского языка | `kel-kel/` | React Native приложение для изучения кыргызского языка |
 | OpenHands AI-агент | `openhands/` | Готовый OpenHands (аналог Devin), подключённый к Google Gemini |
+| Telegram Gemini Bot | `telegram-agent/` | Telegram-бот с Gemini AI: диалог, память, shell-команды |
 
-## OpenHands — быстрый старт
+## Быстрый старт
 
+**OpenHands:**
 ```bash
-cd openhands
-cp .env.example .env   # вписать LLM_API_KEY (ключ Gemini)
-./run.sh               # открыть http://localhost:3000
+cd openhands && cp .env.example .env && ./run.sh
 ```
 
-Подробнее: [openhands/README.md](openhands/README.md)
+**Telegram-бот:**
+```bash
+cd telegram-agent && cp .env.example .env && ./run.sh
+```
+
+Подробнее: [openhands/README.md](openhands/README.md) · [telegram-agent/README.md](telegram-agent/README.md)

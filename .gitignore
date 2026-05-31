@@ -8,3 +8,4 @@
 # Прочее
 .DS_Store
 openhands/.env
+telegram-agent/.env
