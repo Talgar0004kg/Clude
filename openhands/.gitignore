@@ -1,0 +1,8 @@
+# Секреты — никогда не коммитить!
+.env
+
+# Локальное состояние OpenHands
+.openhands/
+workspace/
+
+.DS_Store
