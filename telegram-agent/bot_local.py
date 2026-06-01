@@ -14,6 +14,7 @@
     OLLAMA_MODEL=llama3.2:3b
 """
 import asyncio
+import glob
 import json
 import logging
 import os
@@ -53,7 +54,9 @@ MAX_DOWNLOAD = int(os.getenv("AGENT_MAX_DOWNLOAD_MB", "45")) * 1024 * 1024
 WS_BASE = os.path.abspath(
     os.getenv("AGENT_WORKSPACE", os.path.join(os.path.dirname(__file__), "workspace"))
 )
-UA = "Mozilla/5.0 (compatible; TelegramAgent/1.0)"
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+      "Chrome/124.0.0.0 Safari/537.36")
+_HEADERS = {"User-Agent": UA, "Accept": "*/*", "Accept-Language": "ru,en;q=0.9"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("bot")
@@ -130,7 +133,7 @@ def _encode_url(url):
 
 
 def _http_get(url, binary=False, timeout=30):
-    req = urllib.request.Request(_encode_url(url), headers={"User-Agent": UA})
+    req = urllib.request.Request(_encode_url(url), headers=_HEADERS)
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
         data = r.read()
     return data if binary else data.decode("utf-8", errors="replace")
@@ -220,7 +223,7 @@ def _download(ws, url, filename=""):
     """Скачивает файл в рабочую папку, возвращает имя файла. Бросает при ошибке."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    req = urllib.request.Request(_encode_url(url), headers={"User-Agent": UA})
+    req = urllib.request.Request(_encode_url(url), headers=_HEADERS)
     with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
         if not filename:
             cd = r.headers.get("Content-Disposition", "")
@@ -274,6 +277,57 @@ def t_image_search(ws, query):
     return "Прямые ссылки на изображения:\n" + "\n".join(imgs)
 
 
+def _download_video(ws, url):
+    """Качает видео по ссылке (YouTube/Instagram/TikTok/…) через yt-dlp, ≤49 МБ."""
+    for f in glob.glob(os.path.join(ws, "video.*")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    out = os.path.join(ws, "video.%(ext)s")
+    try:
+        r = subprocess.run(
+            ["yt-dlp", "--no-playlist", "--max-filesize", "49M",
+             "-f", "mp4[height<=720]/best[height<=720]/best",
+             "-o", out, url],
+            capture_output=True, text=True, timeout=300,
+        )
+    except FileNotFoundError:
+        return None, "yt-dlp не установлен (pip install yt-dlp)"
+    except subprocess.TimeoutExpired:
+        return None, "таймаут скачивания видео"
+    files = [f for f in glob.glob(os.path.join(ws, "video.*"))
+             if not f.endswith(".part")]
+    if files:
+        return os.path.basename(files[0]), ""
+    return None, ((r.stdout + r.stderr)[-400:] or "видео не скачалось")
+
+
+def _find_file_links(query, exts):
+    """Ищет прямые ссылки на файлы нужных форматов (fb2/epub/txt/pdf...).
+
+    Сначала прямые ссылки из выдачи, потом — со страниц верхних результатов.
+    """
+    pat = "(?:" + "|".join(exts) + ")"
+    res = _ddg_search(query + " скачать " + " ".join(exts))
+    urls = [u for _, u in res]
+    direct = [u for u in urls
+              if re.search(r"\." + pat + r"($|\?)", u.lower())]
+    if direct:
+        return direct
+    found = []
+    for u in urls[:5]:
+        try:
+            html = _http_get(u)
+        except Exception:  # noqa: BLE001
+            continue
+        for m in re.findall(r'href=["\']([^"\']+\.' + pat + r')["\']', html, re.I):
+            found.append(urllib.parse.urljoin(u, m))
+        if found:
+            break
+    return found
+
+
 TOOLS_FN = {
     "list_files": t_list, "read_file": t_read, "write_file": t_write,
     "run_command": t_run, "fetch_url": t_fetch, "web_search": t_search,
@@ -306,20 +360,29 @@ TOOLS = [{"type": "function", "function": {"name": n, "description": d, "paramet
      {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
     ("send_image", "Найти фото/картинку по запросу, скачать и сразу отправить пользователю (одним вызовом)",
      {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+    ("send_book", "Найти книгу/документ (fb2/epub/txt/pdf) по запросу, скачать и отправить пользователю",
+     {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+    ("send_github", "Скачать репозиторий с GitHub архивом zip и отправить. Формат repo: 'owner/name'",
+     {"type": "object", "properties": {"repo": {"type": "string"}}, "required": ["repo"]}),
+    ("send_video", "Скачать видео по ссылке (YouTube/Instagram/TikTok и др.) и отправить пользователю",
+     {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}),
 ]]
 
 SYSTEM = (
     "Ты — кодинг-агент в Телеграме с РУКАМИ (инструментами). У тебя ЕСТЬ доступ к "
     "файлам, терминалу и интернету. НИКОГДА не говори, что ты чего-то не умеешь или "
     "не можешь отправить/скачать/найти — вместо этого ВЫЗЫВАЙ нужный инструмент.\n"
-    "Как действовать:\n"
-    "- Прислать ФОТО/картинку/обложку → ОДИН вызов send_image(query). Он сам "
-    "найдёт, скачает и отправит. НЕ используй для фото web_search.\n"
-    "- Найти текст/страницу/ссылки → web_search; открыть страницу → fetch_url.\n"
-    "- Скачать файл по прямой ссылке (pdf/mp3/zip) → download_file, потом send_file.\n"
-    "- Отправить готовый файл → send_file (path). Папку/сайт архивом → send_files.\n"
+    "Как действовать (выбирай ОДИН подходящий инструмент и доводи до конца):\n"
+    "- ФОТО/картинка/обложка → send_image(query).\n"
+    "- Книга/документ (fb2/epub/txt/pdf) → send_book(query).\n"
+    "- Репозиторий с GitHub → send_github(repo), repo вида 'owner/name'.\n"
+    "- Видео по ссылке (YouTube/Instagram/TikTok) → send_video(url).\n"
+    "- Файл по прямой ссылке → download_file(url), затем send_file(path).\n"
+    "- Найти текст/ссылки → web_search; открыть страницу → fetch_url.\n"
+    "- Отправить готовый файл → send_file(path). Рабочую папку архивом → send_files.\n"
     "- Сделать сайт/код → write_file; проверить → run_command.\n"
-    "Доводи задачу до конца: не выводи просто список ссылок, а выполняй до результата.\n"
+    "Доводи задачу до конца: не выводи просто список ссылок, а выполняй до файла "
+    "в чате. Если сайт заблокировал (403/анти-бот) — попробуй другой источник.\n"
     "Делай качественные адаптивные сайты (semantic HTML5, meta viewport, "
     "современный CSS). Отвечай по-русски, коротко. Когда всё сделано — напиши "
     "итог БЕЗ вызова инструментов."
@@ -396,6 +459,48 @@ def run_agent(chat_id, task):
                     res = f"картинка по запросу '{qy}' отправлена пользователю"
                 else:
                     res = f"не удалось найти/скачать картинку по запросу '{qy}'"
+            elif name == "send_book":
+                qy = args.get("query", "")
+                links = _find_file_links(qy, ["fb2", "epub", "txt", "pdf"])
+                saved = None
+                for u in links[:10]:
+                    try:
+                        saved = _download(ws, u)
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+                if saved:
+                    yield ("send_file", saved)
+                    res = f"книга/документ по запросу '{qy}' отправлен(а)"
+                else:
+                    res = (f"не нашёл скачиваемый файл по запросу '{qy}'. Многие сайты "
+                           "блокируют ботов; попробуй уточнить формат (fb2/pdf/txt).")
+            elif name == "send_github":
+                repo = (args.get("repo", "") or "").strip().rstrip("/")
+                repo = re.sub(r"^https?://github\.com/", "", repo)
+                saved = None
+                for br in ("main", "master"):
+                    try:
+                        saved = _download(
+                            ws, f"https://codeload.github.com/{repo}/zip/refs/heads/{br}",
+                            filename=repo.split("/")[-1] + ".zip")
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+                if saved:
+                    yield ("send_file", saved)
+                    res = f"репозиторий {repo} отправлен архивом"
+                else:
+                    res = f"не удалось скачать репозиторий '{repo}' (проверь owner/name)."
+            elif name == "send_video":
+                vurl = args.get("url", "")
+                fn, err = _download_video(ws, vurl)
+                if fn:
+                    yield ("send_file", fn)
+                    res = "видео отправлено пользователю"
+                else:
+                    res = (f"не удалось скачать видео: {err}. Возможно, оно больше 49 МБ "
+                           "(лимит Telegram) или требует входа на сайт.")
             else:
                 func = TOOLS_FN.get(name)
                 try:
