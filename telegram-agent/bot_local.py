@@ -216,31 +216,68 @@ def _safe_name(name):
     return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:120] or "download"
 
 
-def t_download(ws, url, filename=""):
+def _download(ws, url, filename=""):
+    """Скачивает файл в рабочую папку, возвращает имя файла. Бросает при ошибке."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    try:
-        req = urllib.request.Request(_encode_url(url), headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
-            if not filename:
-                cd = r.headers.get("Content-Disposition", "")
-                m = re.search(r'filename="?([^"\;]+)"?', cd)
-                filename = m.group(1) if m else os.path.basename(urllib.parse.urlparse(url).path)
-            data = r.read(MAX_DOWNLOAD + 1)
-    except Exception as e:  # noqa: BLE001
-        return f"ошибка скачивания: {e}"
+    req = urllib.request.Request(_encode_url(url), headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
+        if not filename:
+            cd = r.headers.get("Content-Disposition", "")
+            m = re.search(r'filename="?([^"\;]+)"?', cd)
+            filename = m.group(1) if m else os.path.basename(urllib.parse.urlparse(url).path)
+        data = r.read(MAX_DOWNLOAD + 1)
     if len(data) > MAX_DOWNLOAD:
-        return f"файл больше {MAX_DOWNLOAD // 1024 // 1024} МБ — нельзя отправить"
+        raise ValueError(f"файл больше {MAX_DOWNLOAD // 1024 // 1024} МБ")
     filename = _safe_name(filename or "download")
+    if "." not in filename:  # картинки часто без расширения в URL
+        filename += ".jpg"
     with open(_resolve(ws, filename), "wb") as f:
         f.write(data)
-    return f"скачано: {filename} ({len(data)} байт). Теперь вызови send_file с path='{filename}'."
+    return filename
+
+
+def t_download(ws, url, filename=""):
+    try:
+        name = _download(ws, url, filename)
+    except Exception as e:  # noqa: BLE001
+        return f"ошибка скачивания: {e}"
+    return f"скачано: {name}. Теперь вызови send_file с path='{name}'."
+
+
+def _ddg_images(query, limit=6):
+    """Возвращает прямые ссылки на изображения через DuckDuckGo."""
+    headers = {"User-Agent": UA, "Referer": "https://duckduckgo.com/"}
+    try:
+        token = _http_get("https://duckduckgo.com/?q=" + urllib.parse.quote(query)
+                          + "&iax=images&ia=images")
+    except Exception:  # noqa: BLE001
+        token = ""
+    m = re.search(r'vqd=["\']?([\d-]+)', token)
+    if not m:
+        return []
+    url = ("https://duckduckgo.com/i.js?l=ru-ru&o=json&q=" + urllib.parse.quote(query)
+           + "&vqd=" + m.group(1) + "&f=,,,&p=1")
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return []
+    return [it.get("image") for it in data.get("results", []) if it.get("image")][:limit]
+
+
+def t_image_search(ws, query):
+    imgs = _ddg_images(query)
+    if not imgs:
+        return "картинок не найдено"
+    return "Прямые ссылки на изображения:\n" + "\n".join(imgs)
 
 
 TOOLS_FN = {
     "list_files": t_list, "read_file": t_read, "write_file": t_write,
     "run_command": t_run, "fetch_url": t_fetch, "web_search": t_search,
-    "download_file": t_download,
+    "download_file": t_download, "image_search": t_image_search,
 }
 
 # Описания инструментов для модели (Ollama tool-calling).
@@ -265,6 +302,10 @@ TOOLS = [{"type": "function", "function": {"name": n, "description": d, "paramet
      {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}),
     ("send_files", "Упаковать рабочую папку в zip и отправить пользователю",
      {"type": "object", "properties": {}, "required": []}),
+    ("image_search", "Найти прямые ссылки на изображения по запросу",
+     {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+    ("send_image", "Найти фото/картинку по запросу, скачать и сразу отправить пользователю (одним вызовом)",
+     {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
 ]]
 
 SYSTEM = (
@@ -272,10 +313,13 @@ SYSTEM = (
     "файлам, терминалу и интернету. НИКОГДА не говори, что ты чего-то не умеешь или "
     "не можешь отправить/скачать/найти — вместо этого ВЫЗЫВАЙ нужный инструмент.\n"
     "Как действовать:\n"
-    "- Найти что-то в сети → web_search; открыть страницу → fetch_url.\n"
-    "- Скачать файл/картинку → download_file (по прямой ссылке).\n"
-    "- Отправить пользователю файл → send_file (path к файлу). Несколько/папку → send_files.\n"
+    "- Прислать ФОТО/картинку/обложку → ОДИН вызов send_image(query). Он сам "
+    "найдёт, скачает и отправит. НЕ используй для фото web_search.\n"
+    "- Найти текст/страницу/ссылки → web_search; открыть страницу → fetch_url.\n"
+    "- Скачать файл по прямой ссылке (pdf/mp3/zip) → download_file, потом send_file.\n"
+    "- Отправить готовый файл → send_file (path). Папку/сайт архивом → send_files.\n"
     "- Сделать сайт/код → write_file; проверить → run_command.\n"
+    "Доводи задачу до конца: не выводи просто список ссылок, а выполняй до результата.\n"
     "Делай качественные адаптивные сайты (semantic HTML5, meta viewport, "
     "современный CSS). Отвечай по-русски, коротко. Когда всё сделано — напиши "
     "итог БЕЗ вызова инструментов."
@@ -337,6 +381,21 @@ def run_agent(chat_id, task):
             elif name == "send_files":
                 yield ("send_zip", None)
                 res = "архив отправлен пользователю"
+            elif name == "send_image":
+                qy = args.get("query", "")
+                imgs = _ddg_images(qy)
+                saved = None
+                for u in imgs:  # перебираем, пока какая-то картинка не скачается (403 и т.п.)
+                    try:
+                        saved = _download(ws, u)
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+                if saved:
+                    yield ("send_file", saved)
+                    res = f"картинка по запросу '{qy}' отправлена пользователю"
+                else:
+                    res = f"не удалось найти/скачать картинку по запросу '{qy}'"
             else:
                 func = TOOLS_FN.get(name)
                 try:
