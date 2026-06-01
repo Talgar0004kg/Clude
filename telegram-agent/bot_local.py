@@ -59,6 +59,8 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
 _HEADERS = {"User-Agent": UA, "Accept": "*/*", "Accept-Language": "ru,en;q=0.9"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("fontTools").setLevel(logging.WARNING)
+logging.getLogger("fontTools.subset").setLevel(logging.WARNING)
 log = logging.getLogger("bot")
 
 
@@ -366,6 +368,12 @@ TOOLS = [{"type": "function", "function": {"name": n, "description": d, "paramet
      {"type": "object", "properties": {"repo": {"type": "string"}}, "required": ["repo"]}),
     ("send_video", "Скачать видео по ссылке (YouTube/Instagram/TikTok и др.) и отправить пользователю",
      {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}),
+    ("send_doc", "Создать документ из текста (PDF/DOCX/TXT) и отправить пользователю",
+     {"type": "object", "properties": {
+         "content": {"type": "string", "description": "Текст/содержимое документа"},
+         "format": {"type": "string", "description": "pdf, docx или txt"},
+         "filename": {"type": "string", "description": "Имя файла (необязательно)"}},
+      "required": ["content"]}),
 ]]
 
 SYSTEM = (
@@ -377,6 +385,7 @@ SYSTEM = (
     "- Книга/документ (fb2/epub/txt/pdf) → send_book(query).\n"
     "- Репозиторий с GitHub → send_github(repo), repo вида 'owner/name'.\n"
     "- Видео по ссылке (YouTube/Instagram/TikTok) → send_video(url).\n"
+    "- Сделать документ PDF/DOCX/TXT из текста → send_doc(content, format).\n"
     "- Файл по прямой ссылке → download_file(url), затем send_file(path).\n"
     "- Найти текст/ссылки → web_search; открыть страницу → fetch_url.\n"
     "- Отправить готовый файл → send_file(path). Рабочую папку архивом → send_files.\n"
@@ -399,6 +408,80 @@ def ollama_chat(messages):
         return json.loads(r.read())
 
 
+def _find_font():
+    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+              "/usr/share/fonts/TTF/DejaVuSans.ttf",
+              "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"):
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _make_docx(ws, name, content):
+    from docx import Document
+    d = Document()
+    for para in content.split("\n"):
+        d.add_paragraph(para)
+    d.save(_resolve(ws, name))
+    return name
+
+
+def _make_pdf(ws, name, content):
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.add_page()
+    font = _find_font()
+    if font:
+        pdf.add_font("uni", "", font)
+        pdf.set_font("uni", size=12)
+    else:  # без юникод-шрифта кириллица не отрисуется
+        pdf.set_font("helvetica", size=12)
+        content = content.encode("latin-1", "replace").decode("latin-1")
+    # рендерим весь текст разом (multi_cell сам обрабатывает переносы строк)
+    pdf.multi_cell(pdf.epw, 8, content or " ")
+    pdf.output(_resolve(ws, name))
+    return name
+
+
+def make_document(ws, content, fmt="pdf", filename=""):
+    """Создаёт документ нужного формата (pdf/docx/txt) в рабочей папке."""
+    fmt = (fmt or "pdf").lower().lstrip(".")
+    if fmt not in ("pdf", "docx", "txt"):
+        fmt = "pdf"
+    name = filename or f"document.{fmt}"
+    if not name.lower().endswith("." + fmt):
+        name = name.rsplit(".", 1)[0] + "." + fmt
+    name = _safe_name(name)
+    if fmt == "docx":
+        return _make_docx(ws, name, content)
+    if fmt == "txt":
+        with open(_resolve(ws, name), "w", encoding="utf-8") as f:
+            f.write(content)
+        return name
+    return _make_pdf(ws, name, content)
+
+
+def _extract_tool_calls(text):
+    """Вытаскивает вызовы инструментов, если модель написала их текстом, а не
+    структурно. Ищет JSON-объекты вида {"name": ..., "arguments": {...}}."""
+    out = []
+    dec = json.JSONDecoder()
+    for mm in re.finditer(r"\{", text):
+        try:
+            obj, _ = dec.raw_decode(text[mm.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "name" in obj and (
+                "arguments" in obj or "args" in obj or "parameters" in obj):
+            out.append({"function": {
+                "name": obj["name"],
+                "arguments": obj.get("arguments") or obj.get("args")
+                or obj.get("parameters") or {},
+            }})
+    return out
+
+
 def run_agent(chat_id, task):
     """Генератор: ('text'|'tool'|'result'|'send_file'|'send_zip'|'done'|'error', значение)."""
     ws = ws_for(chat_id)
@@ -415,6 +498,13 @@ def run_agent(chat_id, task):
         m = body.get("message", {}) or {}
         text = m.get("content", "") or ""
         calls = m.get("tool_calls") or []
+        # Фолбэк: модель часто пишет вызов инструмента ТЕКСТОМ
+        # (<tool_call>{"name":...,"arguments":...}</tool_call>), а не структурно.
+        if not calls and text:
+            extracted = _extract_tool_calls(text)
+            if extracted:
+                calls = extracted
+                text = ""  # не показываем пользователю сырой JSON
         msgs.append({"role": "assistant", "content": text, "tool_calls": calls})
         if text:
             yield ("text", text)
@@ -501,6 +591,14 @@ def run_agent(chat_id, task):
                 else:
                     res = (f"не удалось скачать видео: {err}. Возможно, оно больше 49 МБ "
                            "(лимит Telegram) или требует входа на сайт.")
+            elif name == "send_doc":
+                try:
+                    saved = make_document(ws, args.get("content", ""),
+                                          args.get("format", "pdf"), args.get("filename", ""))
+                    yield ("send_file", saved)
+                    res = f"документ {saved} создан и отправлен"
+                except Exception as e:  # noqa: BLE001
+                    res = f"ошибка создания документа: {e}"
             else:
                 func = TOOLS_FN.get(name)
                 try:
