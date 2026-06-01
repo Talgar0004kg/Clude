@@ -305,6 +305,25 @@ def _download_video(ws, url):
     return None, ((r.stdout + r.stderr)[-400:] or "видео не скачалось")
 
 
+def _gutendex_links(query):
+    """Прямые ссылки на книги из Project Gutenberg (открытый API, без анти-бота)."""
+    try:
+        data = json.loads(_http_get(
+            "https://gutendex.com/books?search=" + urllib.parse.quote(query)))
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for bk in data.get("results", [])[:3]:
+        f = bk.get("formats", {}) or {}
+        if f.get("application/epub+zip"):
+            out.append((f["application/epub+zip"], "epub"))
+        for k, v in f.items():
+            if k.startswith("text/plain"):
+                out.append((v, "txt"))
+                break
+    return out
+
+
 def _find_file_links(query, exts):
     """Ищет прямые ссылки на файлы нужных форматов (fb2/epub/txt/pdf...).
 
@@ -551,11 +570,14 @@ def run_agent(chat_id, task):
                     res = f"не удалось найти/скачать картинку по запросу '{qy}'"
             elif name == "send_book":
                 qy = args.get("query", "")
-                links = _find_file_links(qy, ["fb2", "epub", "txt", "pdf"])
+                candidates = list(_gutendex_links(qy))  # сначала Project Gutenberg
+                for u in _find_file_links(qy, ["fb2", "epub", "txt", "pdf"]):
+                    ext = u.lower().split("?")[0].rsplit(".", 1)[-1]
+                    candidates.append((u, ext if ext in ("fb2", "epub", "txt", "pdf") else "txt"))
                 saved = None
-                for u in links[:10]:
+                for u, ext in candidates[:12]:
                     try:
-                        saved = _download(ws, u)
+                        saved = _download(ws, u, filename=f"book.{ext}")
                         break
                     except Exception:  # noqa: BLE001
                         continue
