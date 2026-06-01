@@ -560,15 +560,57 @@ async def zip_cmd(u: Update, c: ContextTypes.DEFAULT_TYPE):
     await send_zip(u, u.effective_chat.id)
 
 
+_whisper = None
+
+
+def transcribe(path: str) -> str:
+    """Распознаёт речь из аудиофайла в текст (faster-whisper, локально)."""
+    global _whisper
+    if _whisper is None:
+        from faster_whisper import WhisperModel
+        model = os.getenv("WHISPER_MODEL", "base")
+        _whisper = WhisperModel(model, device="cpu", compute_type="int8")
+    segments, _ = _whisper.transcribe(path, language="ru")
+    return " ".join(s.text.strip() for s in segments).strip()
+
+
+async def on_voice(u: Update, c: ContextTypes.DEFAULT_TYPE):
+    if not allowed(u.effective_user.id):
+        await u.message.reply_text(f"⛔ Доступ запрещён. Ваш ID: {u.effective_user.id}")
+        return
+    voice = u.message.voice or u.message.audio
+    if voice is None:
+        return
+    await u.effective_chat.send_action(ChatAction.TYPING)
+    tg_file = await voice.get_file()
+    data = bytes(await tg_file.download_as_bytearray())
+    tmp = os.path.join(tempfile.mkdtemp(), "voice.oga")
+    with open(tmp, "wb") as f:
+        f.write(data)
+    try:
+        text = await asyncio.to_thread(transcribe, tmp)
+    except Exception as e:  # noqa: BLE001
+        await u.effective_chat.send_message(f"⚠️ Не смог распознать голос: {e}")
+        return
+    if not text:
+        await u.effective_chat.send_message("🤷 Не расслышал. Попробуйте ещё раз.")
+        return
+    await u.effective_chat.send_message(f"📝 Распознал: {text}")
+    await _process(u, c, text)
+
+
 async def on_text(u: Update, c: ContextTypes.DEFAULT_TYPE):
     if not allowed(u.effective_user.id):
         await u.message.reply_text(f"⛔ Доступ запрещён. Ваш ID: {u.effective_user.id}")
         return
+    task = (u.message.text or "").strip()
+    if task:
+        await _process(u, c, task)
+
+
+async def _process(u: Update, c: ContextTypes.DEFAULT_TYPE, task: str):
     if c.chat_data.get("busy"):
         await u.message.reply_text("⏳ Дождитесь завершения текущей задачи.")
-        return
-    task = (u.message.text or "").strip()
-    if not task:
         return
     c.chat_data["busy"] = True
     loop = asyncio.get_event_loop()
@@ -619,6 +661,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("zip", zip_cmd))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, on_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     log.info("Бот запущен. Модель: %s", OLLAMA_MODEL)
     app.run_polling()
