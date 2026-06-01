@@ -393,13 +393,24 @@ TOOLS = [{"type": "function", "function": {"name": n, "description": d, "paramet
          "format": {"type": "string", "description": "pdf, docx или txt"},
          "filename": {"type": "string", "description": "Имя файла (необязательно)"}},
       "required": ["content"]}),
+    ("send_anything", "УНИВЕРСАЛЬНЫЙ: найти в интернете и прислать что угодно по "
+     "запросу или ссылке (фото, книга, видео, репозиторий, файл). Сам определит тип.",
+     {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Что найти и прислать (или прямая ссылка)"}},
+      "required": ["query"]}),
 ]]
 
 SYSTEM = (
     "Ты — кодинг-агент в Телеграме с РУКАМИ (инструментами). У тебя ЕСТЬ доступ к "
     "файлам, терминалу и интернету. НИКОГДА не говори, что ты чего-то не умеешь или "
     "не можешь отправить/скачать/найти — вместо этого ВЫЗЫВАЙ нужный инструмент.\n"
+    "ГЛАВНОЕ ПРАВИЛО: на любую просьбу «пришли/отправь/скачай/найди и пришли» ЧТО "
+    "УГОДНО (фото, книга, видео, музыка, файл, документ, репозиторий, по названию "
+    "или по ссылке) — если этого у тебя ещё нет, вызывай send_anything(query). Он "
+    "сам найдёт в интернете, скачает и отправит. Не отказывайся и не проси ссылку — "
+    "просто вызови send_anything.\n"
     "Как действовать (выбирай ОДИН подходящий инструмент и доводи до конца):\n"
+    "- Любой файл/контент по названию или ссылке → send_anything(query).\n"
     "- ФОТО/картинка/обложка → send_image(query).\n"
     "- Книга/документ (fb2/epub/txt/pdf) → send_book(query).\n"
     "- Репозиторий с GitHub → send_github(repo), repo вида 'owner/name'.\n"
@@ -499,6 +510,70 @@ def _extract_tool_calls(text):
                 or obj.get("parameters") or {},
             }})
     return out
+
+
+def _smart_fetch(ws, q):
+    """Универсальный поиск+скачивание: сам определяет тип запроса и возвращает
+    имя скачанного файла (или None). Покрывает: прямые ссылки, видео, github,
+    фото, книги и общий поиск файла."""
+    ql = q.lower()
+
+    # 1) Прямая ссылка
+    if q.startswith(("http://", "https://")):
+        if any(s in ql for s in ("youtube.com", "youtu.be", "instagram.com",
+                                  "tiktok.com", "vimeo.com", "/video")):
+            fn, _ = _download_video(ws, q)
+            return fn
+        if "github.com" in ql:
+            repo = re.sub(r"^https?://github\.com/", "", q).rstrip("/")
+            for br in ("main", "master"):
+                try:
+                    return _download(ws, f"https://codeload.github.com/{repo}/zip/refs/heads/{br}",
+                                     filename=repo.split("/")[-1] + ".zip")
+                except Exception:  # noqa: BLE001
+                    continue
+            return None
+        try:
+            return _download(ws, q)
+        except Exception:  # noqa: BLE001
+            return None
+
+    # 2) По смыслу запроса
+    if any(w in ql for w in ("фото", "картинк", "обложк", "изображен", "image", "photo", "пикчу")):
+        for u in _ddg_images(q):
+            try:
+                return _download(ws, u)
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    if any(w in ql for w in ("книг", "book", "роман", "учебник", "fb2", "epub")):
+        cands = list(_gutendex_links(q))
+        for u in _find_file_links(q, ["fb2", "epub", "txt", "pdf"]):
+            ext = u.lower().split("?")[0].rsplit(".", 1)[-1]
+            cands.append((u, ext if ext in ("fb2", "epub", "txt", "pdf") else "txt"))
+        for u, ext in cands[:12]:
+            try:
+                return _download(ws, u, filename=f"book.{ext}")
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    # 3) Общий случай — ищем любой прямой файл по запросу
+    links = _find_file_links(q, ["pdf", "mp3", "zip", "fb2", "epub", "jpg",
+                                 "png", "mp4", "docx", "apk"])
+    for u in links[:10]:
+        try:
+            return _download(ws, u)
+        except Exception:  # noqa: BLE001
+            continue
+    # как фолбэк — пробуем картинку
+    for u in _ddg_images(q):
+        try:
+            return _download(ws, u)
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 def run_agent(chat_id, task):
@@ -621,6 +696,15 @@ def run_agent(chat_id, task):
                     res = f"документ {saved} создан и отправлен"
                 except Exception as e:  # noqa: BLE001
                     res = f"ошибка создания документа: {e}"
+            elif name == "send_anything":
+                q = (args.get("query") or args.get("url") or "").strip()
+                saved = _smart_fetch(ws, q)
+                if saved:
+                    yield ("send_file", saved)
+                    res = f"нашёл и отправил по запросу '{q}'"
+                else:
+                    res = (f"не удалось найти и скачать '{q}'. Уточни (фото/книга/видео/"
+                           "репозиторий/прямая ссылка) — сайт мог заблокировать бота.")
             else:
                 func = TOOLS_FN.get(name)
                 try:
