@@ -69,6 +69,7 @@ class OllamaClient:
             "messages": _to_ollama(messages, self._system),
             "tools": self._tools,
             "stream": False,
+            "keep_alive": "30m",
             "options": {"temperature": 0.2},
         }
         data = json.dumps(payload).encode("utf-8")

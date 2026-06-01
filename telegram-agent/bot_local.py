@@ -242,7 +242,7 @@ SYSTEM = (
 
 def ollama_chat(messages):
     payload = {"model": OLLAMA_MODEL, "messages": messages, "tools": TOOLS,
-               "stream": False, "options": {"temperature": 0.2}}
+               "stream": False, "keep_alive": "30m", "options": {"temperature": 0.2}}
     req = urllib.request.Request(
         OLLAMA_HOST + "/api/chat", data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
