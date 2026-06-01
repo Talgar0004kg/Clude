@@ -175,16 +175,40 @@ class _Search(HTMLParser):
                 self.res.append((title, real))
 
 
+def _ddg_search(query, limit=8):
+    """Поиск через DuckDuckGo (POST), с запасным lite-эндпоинтом и regex-фолбэком."""
+    data = urllib.parse.urlencode({"q": query, "kl": "ru-ru"}).encode()
+    headers = {"User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded"}
+    for url in ("https://html.duckduckgo.com/html/", "https://lite.duckduckgo.com/lite/"):
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as r:  # noqa: S310
+                html = r.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            continue
+        p = _Search()
+        p.feed(html)
+        res = p.res
+        if not res:
+            # фолбэк: вытащить ссылки из редиректов /l/?uddg=...
+            res = [("", urllib.parse.unquote(m)) for m in re.findall(r'uddg=([^&"\']+)', html)]
+        if res:
+            # убрать дубли, оставить http(s)
+            seen, out = set(), []
+            for t, u in res:
+                if u.startswith(("http://", "https://")) and u not in seen:
+                    seen.add(u)
+                    out.append((t, u))
+            if out:
+                return out[:limit]
+    return []
+
+
 def t_search(ws, query):
-    try:
-        html = _http_get("https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query))
-    except Exception as e:  # noqa: BLE001
-        return f"ошибка поиска: {e}"
-    p = _Search()
-    p.feed(html)
-    if not p.res:
-        return "ничего не найдено"
-    return "\n".join(f"{i+1}. {t}\n   {u}" for i, (t, u) in enumerate(p.res[:8]))
+    res = _ddg_search(query)
+    if not res:
+        return "ничего не найдено (поисковик не вернул результатов)"
+    return "\n".join(f"{i+1}. {t or '(без названия)'}\n   {u}" for i, (t, u) in enumerate(res))
 
 
 def _safe_name(name):

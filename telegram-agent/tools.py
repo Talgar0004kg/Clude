@@ -226,25 +226,44 @@ class _SearchParser(HTMLParser):
 
 
 def web_search(workspace: str, query: str, max_results: int = 8) -> str:
-    """Ищет в интернете (DuckDuckGo) и возвращает список «название + ссылка»."""
-    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
-    try:
-        html = _http_get(url)
-    except Exception as exc:  # noqa: BLE001
-        raise ToolError(f"Ошибка поиска: {exc}")
-    parser = _SearchParser()
-    parser.feed(html)
-    if not parser.results:
-        return "Ничего не найдено."
+    """Ищет в интернете (DuckDuckGo, POST) и возвращает список «название + ссылка»."""
+    data = urllib.parse.urlencode({"q": query, "kl": "ru-ru"}).encode()
+    headers = {"User-Agent": _USER_AGENT,
+               "Content-Type": "application/x-www-form-urlencoded"}
+    results: list[tuple[str, str]] = []
+    for url in ("https://html.duckduckgo.com/html/", "https://lite.duckduckgo.com/lite/"):
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                html = resp.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            continue
+        parser = _SearchParser()
+        parser.feed(html)
+        results = parser.results
+        if not results:
+            results = [("", urllib.parse.unquote(m))
+                       for m in re.findall(r'uddg=([^&"\']+)', html)]
+        # оставить уникальные http(s)
+        seen, clean = set(), []
+        for title, link in results:
+            if link.startswith(("http://", "https://")) and link not in seen:
+                seen.add(link)
+                clean.append((title, link))
+        if clean:
+            results = clean
+            break
+        results = []
+    if not results:
+        return "Ничего не найдено (поисковик не вернул результатов)."
     try:
         limit = int(max_results)
     except (TypeError, ValueError):
         limit = 8
-    lines = [
-        f"{i + 1}. {title}\n   {link}"
-        for i, (title, link) in enumerate(parser.results[: max(1, limit)])
-    ]
-    return "\n".join(lines)
+    return "\n".join(
+        f"{i + 1}. {title or '(без названия)'}\n   {link}"
+        for i, (title, link) in enumerate(results[: max(1, limit)])
+    )
 
 
 def _safe_filename(name: str) -> str:
