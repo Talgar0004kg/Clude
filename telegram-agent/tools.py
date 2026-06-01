@@ -83,8 +83,26 @@ def run_command(workspace: str, command: str) -> str:
 # --- Работа с сайтами ---
 
 
+def _encode_url(url: str) -> str:
+    """Кодирует не-ASCII символы в URL (кириллица в пути/запросе/домене)."""
+    try:
+        url.encode("ascii")
+        return url
+    except UnicodeEncodeError:
+        p = urllib.parse.urlsplit(url)
+        netloc = p.netloc
+        try:
+            netloc = netloc.encode("idna").decode("ascii")
+        except Exception:  # noqa: BLE001
+            pass
+        return urllib.parse.urlunsplit((
+            p.scheme, netloc, urllib.parse.quote(p.path),
+            urllib.parse.quote(p.query, safe="=&"), p.fragment,
+        ))
+
+
 def _http_get(url: str, binary: bool = False, timeout: int = 30):
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    req = urllib.request.Request(_encode_url(url), headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         data = resp.read()
     return data if binary else data.decode("utf-8", errors="replace")
@@ -239,7 +257,7 @@ def download_file(workspace: str, url: str, filename: str = "") -> str:
     """Скачивает файл по URL (любого типа) в рабочую папку."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+    req = urllib.request.Request(_encode_url(url), headers={"User-Agent": _USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
             if not filename:

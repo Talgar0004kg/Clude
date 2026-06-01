@@ -111,8 +111,26 @@ def t_run(ws, command):
 
 # ─── Интернет-инструменты ─────────────────────────────────────────────────
 
+def _encode_url(url):
+    """Кодирует не-ASCII символы в URL (кириллица в пути/запросе/домене)."""
+    try:
+        url.encode("ascii")
+        return url
+    except UnicodeEncodeError:
+        p = urllib.parse.urlsplit(url)
+        netloc = p.netloc
+        try:
+            netloc = netloc.encode("idna").decode("ascii")
+        except Exception:  # noqa: BLE001
+            pass
+        return urllib.parse.urlunsplit((
+            p.scheme, netloc, urllib.parse.quote(p.path),
+            urllib.parse.quote(p.query, safe="=&"), p.fragment,
+        ))
+
+
 def _http_get(url, binary=False, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    req = urllib.request.Request(_encode_url(url), headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310
         data = r.read()
     return data if binary else data.decode("utf-8", errors="replace")
@@ -178,7 +196,7 @@ def t_download(ws, url, filename=""):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        req = urllib.request.Request(_encode_url(url), headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=60) as r:  # noqa: S310
             if not filename:
                 cd = r.headers.get("Content-Disposition", "")
@@ -284,8 +302,14 @@ def run_agent(chat_id, task):
             yield ("tool", f"{name} {args.get('path') or args.get('command') or args.get('query') or args.get('url') or ''}".strip())
 
             if name == "send_file":
-                yield ("send_file", args.get("path", ""))
-                res = f"файл {args.get('path','')} отправлен пользователю"
+                p = args.get("path", "")
+                target = os.path.abspath(os.path.join(ws, p))
+                if (target == ws or target.startswith(ws + os.sep)) and os.path.isfile(target):
+                    yield ("send_file", p)
+                    res = f"файл {p} отправлен пользователю"
+                else:
+                    res = (f"файл '{p}' НЕ найден в рабочей папке. Сначала скачай его "
+                           "через download_file, потом отправляй send_file с относительным путём.")
             elif name == "send_files":
                 yield ("send_zip", None)
                 res = "архив отправлен пользователю"

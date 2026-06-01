@@ -128,8 +128,16 @@ class Agent:
                     result = "Архив с файлами отправлен пользователю в чат."
                 elif name == "send_file":
                     path = args.get("path", "")
-                    yield {"type": "send_file", "path": path}
-                    result = f"Файл '{path}' отправлен пользователю в чат."
+                    target = os.path.abspath(os.path.join(self._workspace, path))
+                    if (target == self._workspace
+                            or target.startswith(self._workspace + os.sep)) \
+                            and os.path.isfile(target):
+                        yield {"type": "send_file", "path": path}
+                        result = f"Файл '{path}' отправлен пользователю в чат."
+                    else:
+                        result = (f"Файл '{path}' НЕ найден в рабочей папке. Сначала "
+                                  "скачай его через download_file, затем send_file с "
+                                  "относительным путём.")
                 elif name == "git_commit":
                     result = tools.git_commit(
                         self._workspace,
