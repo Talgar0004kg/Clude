@@ -9,7 +9,6 @@ import '../core/context_manager.dart';
 import '../core/security_guard.dart';
 import '../core/action_executor.dart';
 import '../core/command_parser.dart';
-import '../services/intent_service.dart';
 import '../models/message.dart';
 import '../utils/text_utils.dart';
 import '../widgets/waveform_widget.dart';
@@ -35,13 +34,9 @@ class _HomeScreenState extends State<HomeScreen>
   AssistantState _state = AssistantState.idle;
   String _transcript = '';
   String _response = '';
-  bool _serviceRunning = false; // непрерывный режим разговора
+  bool _serviceRunning = false; // активный режим (как Gemini Live)
   bool _stopRequested = false;
-  // Слово-активатор: в hands-free режиме запрос к ИИ уходит только при обращении.
-  bool _wakeWordEnabled = true;
-  static const List<String> _wakeWords = [
-    'пятница', 'пятницу', 'пятницы', 'пятниц', 'friday', 'фрайдей', 'фрайди', 'фрайдэй'
-  ];
+  String? _pendingBarge; // текст, которым пользователь перебил озвучку
   int _navIndex = 0;
   double _level = 0.0;
 
@@ -71,7 +66,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Вернулись в приложение в активном режиме — снова слушаем.
     if (state == AppLifecycleState.resumed &&
         _serviceRunning &&
         !_stopRequested &&
@@ -88,7 +82,7 @@ class _HomeScreenState extends State<HomeScreen>
     if (mounted) setState(() => _state = s);
   }
 
-  /// Кнопка Вкл/Выкл — включает/выключает непрерывный режим разговора.
+  /// Главная кнопка — включить/выключить ассистента.
   Future<void> _toggleService() async {
     if (_serviceRunning) {
       await _stopConversation();
@@ -101,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// Полная остановка разговора (ручная).
+  /// Полная остановка (ручная).
   Future<void> _stopConversation() async {
     _stopRequested = true;
     await _voice.stopListening();
@@ -115,9 +109,10 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// Запускает прослушивание (с паузой 3 сек на «договорить»).
+  /// Слушает речь (с паузой 3 сек на «договорить»).
   Future<void> _beginListening() async {
     await _voice.stopSpeaking();
+    if (!mounted) return;
     setState(() {
       _state = AssistantState.listening;
       _transcript = '';
@@ -136,7 +131,7 @@ class _HomeScreenState extends State<HomeScreen>
         processCommand(text);
       },
       onListenEnd: () {
-        // Тишина без фразы: в непрерывном режиме слушаем снова.
+        // Тишина без фразы — в активном режиме слушаем снова.
         if (_serviceRunning && !_stopRequested && mounted) {
           _scheduleResume();
         } else {
@@ -155,7 +150,6 @@ class _HomeScreenState extends State<HomeScreen>
     }
   }
 
-  /// В непрерывном режиме возобновляет прослушивание после паузы.
   void _maybeResume() {
     if (_serviceRunning && !_stopRequested && mounted) {
       _scheduleResume();
@@ -163,9 +157,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _scheduleResume() {
-    Future.delayed(const Duration(milliseconds: 500), () {
-      // Не слушаем в фоне (например, после открытия WhatsApp) — только когда
-      // приложение на экране.
+    Future.delayed(const Duration(milliseconds: 400), () {
       final resumed = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
       if (_serviceRunning && !_stopRequested && mounted && resumed && !_voice.isListening) {
         _beginListening();
@@ -173,6 +165,7 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
+  /// Один запрос на команду: думает → говорит (можно перебить) → действует.
   Future<void> processCommand(String text) async {
     final spoken = text.trim();
     if (spoken.isEmpty) {
@@ -180,111 +173,80 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
 
-    // Слово-активатор: реагируем только на обращение «Пятница …».
-    String effective = spoken;
-    if (_wakeWordEnabled) {
-      final cmd = _extractAfterWake(spoken);
-      if (cmd == null) {
-        // К Пятнице не обращались — не тратим запрос к ИИ, слушаем дальше.
-        _maybeResume();
-        return;
-      }
-      if (cmd.isEmpty) {
-        // Сказали только имя — коротко отзываемся без запроса к API.
-        await _say('Да, слушаю.');
-        _setState(AssistantState.idle);
-        _maybeResume();
-        return;
-      }
-      effective = cmd;
-    }
-
     _context.add(Message(
       id: DateTime.now().toIso8601String(),
-      text: effective,
+      text: spoken,
       role: MessageRole.user,
       timestamp: DateTime.now(),
     ));
     if (mounted) setState(() => _response = '');
 
-    try {
-      if (!SecurityGuard.isAllowed(effective)) {
-        await _say(SecurityGuard.blockMessage());
-        return;
-      }
+    String speech;
+    Map<String, dynamic>? action;
 
+    if (!SecurityGuard.isAllowed(spoken)) {
+      speech = SecurityGuard.blockMessage();
+    } else {
       _setState(AssistantState.thinking);
 
       // Локальные команды (без обращения к ИИ).
-      final localResult = await CommandParser.tryParse(effective);
+      final localResult = await CommandParser.tryParse(spoken);
       if (localResult != null && localResult.matched) {
-        await _say(localResult.success ? 'Выполнено.' : 'Не удалось выполнить.');
-        return;
-      }
-
-      // Запрос к Gemini — один на команду.
-      final reply = await _gemini.sendMessageStream(effective);
-      if (reply == null) {
-        await _say('Не удалось получить ответ. Проверьте интернет и ключ.');
-        return;
-      }
-
-      final data = _parseAction(reply);
-      if (data != null) {
-        // Это команда телефону: озвучиваем speech и выполняем все шаги локально.
-        final speech = (data['speech'] as String?)?.trim();
-        await _say((speech != null && speech.isNotEmpty) ? speech : 'Выполняю.');
-        final ok = await ActionExecutor.executeMap(data);
-        if (!ok) {
-          await _voice.speak('Не получилось. Проверьте, что контакт есть в телефоне и приложение установлено.');
-        }
+        speech = localResult.success ? 'Выполнено.' : 'Не удалось выполнить.';
       } else {
-        // Обычный ответ — проговариваем.
-        if (mounted) setState(() {
-          _state = AssistantState.speaking;
-          _response = reply;
-        });
-        await _voice.speak(reply);
+        // Один запрос к Gemini (с поиском Google внутри него).
+        final reply = await _gemini.sendMessageStream(spoken);
+        if (reply == null) {
+          speech = 'Не удалось получить ответ. Проверьте интернет и ключ.';
+        } else {
+          _context.add(Message(
+            id: '${DateTime.now().toIso8601String()}_r',
+            text: reply,
+            role: MessageRole.assistant,
+            timestamp: DateTime.now(),
+          ));
+          final data = _parseAction(reply);
+          if (data != null) {
+            action = data;
+            final s = (data['speech'] as String?)?.trim();
+            speech = (s != null && s.isNotEmpty) ? s : 'Выполняю.';
+          } else {
+            speech = reply;
+          }
+        }
       }
-
-      _context.add(Message(
-        id: '${DateTime.now().toIso8601String()}_r',
-        text: reply,
-        role: MessageRole.assistant,
-        timestamp: DateTime.now(),
-      ));
-    } finally {
-      _setState(AssistantState.idle);
-      _maybeResume();
     }
-  }
 
-  /// Возвращает команду после слова-активатора «Пятница».
-  /// null — обращения не было; '' — сказали только имя.
-  String? _extractAfterWake(String phrase) {
-    final lower = phrase.toLowerCase();
-    for (final w in _wakeWords) {
-      final idx = lower.indexOf(w);
-      if (idx == -1) continue;
-      final lead = RegExp(r'^[\s,.:;!?\-—]+');
-      final trail = RegExp(r'[\s,.:;!?\-—]+$');
-      // Часть после имени («Пятница, открой …»).
-      final after = phrase.substring(idx + w.length).replaceFirst(lead, '').trim();
-      if (after.isNotEmpty) return after;
-      // Имя в конце («открой телеграм, пятница») — берём часть до имени.
-      final before = phrase.substring(0, idx).replaceFirst(trail, '').trim();
-      return before; // '' если фраза состояла только из имени
-    }
-    return null;
-  }
-
-  /// Показывает и проговаривает короткую фразу.
-  Future<void> _say(String msg) async {
+    // Говорит и одновременно слушает — пользователь может перебить.
+    _pendingBarge = null;
     if (mounted) setState(() {
       _state = AssistantState.speaking;
-      _response = msg;
+      _response = speech;
     });
-    await _voice.speak(msg);
+    await _voice.speakAndListen(
+      text: speech,
+      onUserSpeech: (t) => _pendingBarge = t,
+    );
+
+    // Перебили — обрабатываем новую фразу, действие текущей отменяем.
+    if (_pendingBarge != null) {
+      final next = _pendingBarge!;
+      _pendingBarge = null;
+      if (mounted) setState(() => _transcript = next);
+      await processCommand(next);
+      return;
+    }
+
+    // Не перебили — выполняем действие (если было).
+    if (action != null) {
+      final ok = await ActionExecutor.executeMap(action);
+      if (!ok) {
+        await _voice.speak('Не получилось. Проверьте, что контакт есть в телефоне и приложение установлено.');
+      }
+    }
+
+    _setState(AssistantState.idle);
+    _maybeResume();
   }
 
   /// Если ответ ИИ — JSON-команда телефону, возвращает её как map, иначе null.
@@ -356,7 +318,7 @@ class _HomeScreenState extends State<HomeScreen>
                       _response,
                       textAlign: TextAlign.center,
                       style: const TextStyle(color: Color(AppConfig.colorText), fontSize: 16),
-                      maxLines: 6,
+                      maxLines: 8,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -378,12 +340,13 @@ class _HomeScreenState extends State<HomeScreen>
             AssistantState.idle: 'Готова, говорите',
             AssistantState.listening: 'Слушаю...',
             AssistantState.thinking: 'Обрабатываю...',
-            AssistantState.speaking: 'Отвечаю...',
+            AssistantState.speaking: 'Отвечаю... (можно перебить)',
           }[_state] ??
           '';
     }
     return Text(
       label,
+      textAlign: TextAlign.center,
       style: TextStyle(
         color: !_serviceRunning ? const Color(0xFF6B7280) : const Color(AppConfig.colorAccent),
         fontSize: 16,
@@ -394,15 +357,14 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _bottomControls() {
     final active = _serviceRunning;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
       child: Column(
         children: [
-          // Главная кнопка: включить / выключить ассистента (hands-free).
           GestureDetector(
             onTap: _toggleService,
             child: Container(
-              width: 96,
-              height: 96,
+              width: 104,
+              height: 104,
               decoration: BoxDecoration(
                 color: active ? const Color(AppConfig.colorError) : const Color(AppConfig.colorAccent),
                 shape: BoxShape.circle,
@@ -410,7 +372,7 @@ class _HomeScreenState extends State<HomeScreen>
                   BoxShadow(
                     color: (active ? const Color(AppConfig.colorError) : const Color(AppConfig.colorAccent))
                         .withValues(alpha: 0.45),
-                    blurRadius: 26,
+                    blurRadius: 28,
                     spreadRadius: 6,
                   ),
                 ],
@@ -418,54 +380,21 @@ class _HomeScreenState extends State<HomeScreen>
               child: Icon(
                 active ? Icons.stop_rounded : Icons.power_settings_new,
                 color: Colors.white,
-                size: 44,
+                size: 48,
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Text(
             active ? 'Выключить' : 'Включить',
             style: TextStyle(
               color: active ? const Color(AppConfig.colorError) : const Color(AppConfig.colorText),
-              fontSize: 15,
+              fontSize: 16,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _quickBtn(Icons.phone, 'Телефон', () => IntentService.openApp('phone')),
-              _quickBtn(Icons.message, 'Сообщения', () => IntentService.openApp('messages')),
-              _quickBtn(Icons.calendar_today, 'Календарь', () => IntentService.openApp('calendar')),
-              _quickBtn(
-                _context.privateMode ? Icons.lock : Icons.lock_open,
-                'Приватно',
-                () => setState(() => _context.setPrivateMode(!_context.privateMode)),
-              ),
-            ],
-          ),
         ],
       ),
-    );
-  }
-
-  Widget _quickBtn(IconData icon, String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(children: [
-        Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: const Color(0xFF1F2937),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Icon(icon, color: const Color(AppConfig.colorAccent), size: 22),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: const TextStyle(color: Color(0xFF6B7280), fontSize: 11)),
-      ]),
     );
   }
 }

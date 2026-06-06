@@ -54,6 +54,8 @@ class VoiceService {
   Stream<String> get partialStream => _partialController.stream;
 
   Completer<void>? _speakCompleter;
+  // Текст, который сейчас произносится (для фильтра собственного эха).
+  String _currentSpoken = '';
 
   // Ручная финализация по тишине (ждём паузу, чтобы дать договорить).
   Timer? _silenceTimer;
@@ -255,6 +257,81 @@ class VoiceService {
         onTimeout: () {},
       );
     }
+  }
+
+  /// Произносит текст и ОДНОВРЕМЕННО слушает — если пользователь начинает
+  /// говорить (не эхо собственного голоса), озвучка прерывается и его слова
+  /// уходят в onUserSpeech (barge-in, как в Gemini Live).
+  Future<void> speakAndListen({
+    required String text,
+    required void Function(String userText) onUserSpeech,
+  }) async {
+    if (text.trim().isEmpty) return;
+    if (!_ttsReady) {
+      await _initTts();
+      if (!_ttsReady) return;
+    }
+    if (!_sttReady) {
+      await _initStt();
+    }
+
+    await stopListening();
+    _currentSpoken = text.toLowerCase();
+    bool interrupted = false;
+
+    // Параллельное прослушивание для перебивания.
+    if (_sttReady) {
+      _listening = true;
+      _delivered = false;
+      try {
+        await _stt.listen(
+          onResult: (SpeechRecognitionResult r) {
+            final w = r.recognizedWords.trim();
+            if (w.isEmpty || interrupted) return;
+            if (_isEcho(w)) return; // игнорируем собственный голос
+            interrupted = true;
+            onUserSpeech(w);
+            _stt.stop();
+            _tts.stop();
+          },
+          localeId: 'ru_RU',
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 30),
+          onSoundLevelChange: (level) => _levelController.add(_normalizeLevel(level)),
+          listenOptions: SpeechListenOptions(
+            partialResults: true,
+            cancelOnError: false,
+            listenMode: ListenMode.dictation,
+          ),
+        );
+      } catch (e) {
+        AppLogger.error('barge-in listen failed', e);
+      }
+    }
+
+    // Произносим (ждём окончания или прерывания).
+    _speakCompleter = Completer<void>();
+    try {
+      await _tts.speak(text);
+    } catch (e) {
+      AppLogger.error('speak failed', e);
+    }
+    if (_speakCompleter != null && !_speakCompleter!.isCompleted) {
+      await _speakCompleter!.future.timeout(const Duration(seconds: 30), onTimeout: () {});
+    }
+
+    _listening = false;
+    try {
+      await _stt.stop();
+    } catch (_) {}
+    _levelController.add(0.0);
+  }
+
+  /// Похоже ли распознанное на собственную озвучку (эхо)?
+  bool _isEcho(String words) {
+    final w = words.toLowerCase().trim();
+    if (w.length < 3) return true; // слишком коротко — шум/эхо
+    return _currentSpoken.contains(w) || w.contains(_currentSpoken);
   }
 
   Future<void> stopSpeaking() async {
