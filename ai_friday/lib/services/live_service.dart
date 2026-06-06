@@ -27,6 +27,7 @@ class LiveService {
   StreamSubscription<Uint8List>? _micSub;
   bool _active = false;
   bool _playerReady = false;
+  Completer<bool>? _connect; // завершается true при setupComplete
 
   bool get isActive => _active;
 
@@ -133,7 +134,12 @@ class LiveService {
         'setup': {
           'model': 'models/${AiConfig.liveModel}',
           'generationConfig': {
-            'responseModalities': ['AUDIO']
+            'responseModalities': ['AUDIO'],
+            'speechConfig': {
+              'voiceConfig': {
+                'prebuiltVoiceConfig': {'voiceName': AiConfig.liveVoice}
+              }
+            }
           },
           'systemInstruction': {
             'parts': [
@@ -163,18 +169,34 @@ class LiveService {
 
     try {
       _emit(LiveState.connecting);
+      _connect = Completer<bool>();
       _ch = WebSocketChannel.connect(Uri.parse('$_wsBase?key=$key'));
       await _ch!.ready;
       _wsSub = _ch!.stream.listen(
         _onMessage,
         onError: (e) {
           AppLogger.error('Live ws error', e);
+          _failConnect();
           _emit(LiveState.error);
         },
-        onDone: () => stop(),
+        onDone: () {
+          _failConnect();
+          stop();
+        },
       );
       _ch!.sink.add(jsonEncode(_setupMessage()));
       _active = true;
+
+      // Успех только после setupComplete (иначе — реальный сбой подключения).
+      final ok = await _connect!.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => false,
+      );
+      if (!ok) {
+        AppLogger.error('Live: setup not confirmed');
+        await stop();
+        return false;
+      }
       return true;
     } catch (e) {
       AppLogger.error('Live connect failed', e);
@@ -183,7 +205,12 @@ class LiveService {
     }
   }
 
+  void _failConnect() {
+    if (_connect != null && !_connect!.isCompleted) _connect!.complete(false);
+  }
+
   Future<void> _onSetupComplete() async {
+    if (_connect != null && !_connect!.isCompleted) _connect!.complete(true);
     // Проигрывание ответов (24кГц) и захват микрофона (16кГц).
     if (!_playerReady) {
       FlutterPcmSound.setup(sampleRate: 24000, channelCount: 1);

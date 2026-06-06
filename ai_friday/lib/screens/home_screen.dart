@@ -119,19 +119,31 @@ class _HomeScreenState extends State<HomeScreen>
       return;
     }
     _stopRequested = false;
-    setState(() => _serviceRunning = true);
+    setState(() {
+      _serviceRunning = true;
+      _state = AssistantState.thinking;
+      _transcript = '';
+      _response = 'Подключаюсь к Пятнице...';
+    });
 
-    // Сначала пробуем живой режим (Gemini Live в реальном времени).
+    // Только живой режим (Gemini Live), без запасного.
     final live = await _live.start();
     if (live) {
       _liveMode = true;
+      if (mounted) setState(() => _response = '');
       return; // дальше всё ведёт LiveService (звук, перебивание, действия)
     }
 
-    // Фолбэк: распознавание + текстовая модель + озвучка.
+    // Без фолбэка — честно сообщаем о неудаче подключения.
     _liveMode = false;
-    await _voice.speak('Пятница активирована. Слушаю вас.');
-    await _beginListening();
+    if (mounted) {
+      setState(() {
+        _serviceRunning = false;
+        _state = AssistantState.idle;
+        _response =
+            'Не удалось подключиться к Пятнице (Gemini Live). Проверьте интернет и API-ключ, затем нажмите «Включить» снова.';
+      });
+    }
   }
 
   /// Полная остановка (ручная).
