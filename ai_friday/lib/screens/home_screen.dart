@@ -141,7 +141,7 @@ class _HomeScreenState extends State<HomeScreen>
         _serviceRunning = false;
         _state = AssistantState.idle;
         _response =
-            'Не удалось подключиться к Пятнице (Gemini Live). Проверьте интернет и API-ключ, затем нажмите «Включить» снова.';
+            'Не удалось подключиться к Пятнице (Gemini Live): ${_live.lastError}. Проверьте интернет/ключ и нажмите «Включить» снова.';
       });
     }
   }

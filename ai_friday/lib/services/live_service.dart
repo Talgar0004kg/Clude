@@ -28,6 +28,7 @@ class LiveService {
   bool _active = false;
   bool _playerReady = false;
   Completer<bool>? _connect; // завершается true при setupComplete
+  String lastError = ''; // последняя причина сбоя (для показа пользователю)
 
   bool get isActive => _active;
 
@@ -155,13 +156,16 @@ class LiveService {
   /// Запускает живую сессию. Возвращает false, если не удалось (нужен фолбэк).
   Future<bool> start() async {
     if (_active) return true;
+    lastError = '';
     final key = KeyManager().getActiveKey();
     if (key == null) {
+      lastError = 'нет API-ключа';
       AppLogger.error('Live: no API key');
       _emit(LiveState.error);
       return false;
     }
     if (!await _recorder.hasPermission()) {
+      lastError = 'нет доступа к микрофону';
       AppLogger.error('Live: no mic permission');
       _emit(LiveState.error);
       return false;
@@ -175,11 +179,16 @@ class LiveService {
       _wsSub = _ch!.stream.listen(
         _onMessage,
         onError: (e) {
+          lastError = 'ошибка соединения: $e';
           AppLogger.error('Live ws error', e);
           _failConnect();
           _emit(LiveState.error);
         },
         onDone: () {
+          if (_connect != null && !_connect!.isCompleted) {
+            lastError =
+                'соединение закрыто (code ${_ch?.closeCode ?? '-'}: ${_ch?.closeReason ?? ''})';
+          }
           _failConnect();
           stop();
         },
@@ -193,12 +202,14 @@ class LiveService {
         onTimeout: () => false,
       );
       if (!ok) {
-        AppLogger.error('Live: setup not confirmed');
+        if (lastError.isEmpty) lastError = 'нет ответа setupComplete (таймаут)';
+        AppLogger.error('Live: setup not confirmed ($lastError)');
         await stop();
         return false;
       }
       return true;
     } catch (e) {
+      lastError = 'исключение: $e';
       AppLogger.error('Live connect failed', e);
       await stop();
       return false;

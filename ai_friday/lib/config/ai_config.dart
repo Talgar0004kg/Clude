@@ -4,7 +4,8 @@ class AiConfig {
   static const String modelName = 'gemini-2.5-flash';
 
   // Модель Gemini Live (реальное время, нативный звук + function calling).
-  static const String liveModel = 'gemini-2.0-flash-live-001';
+  // gemini-2.0-flash-live-001 отключён Google 01.06.2026 — используем актуальную.
+  static const String liveModel = 'gemini-3.1-flash-live-preview';
 
   // Голос Пятницы в Live (женский, под F.R.I.D.A.Y.).
   static const String liveVoice = 'Aoede';
