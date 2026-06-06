@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../config/app_config.dart';
 import '../services/key_manager.dart';
 import '../services/contact_service.dart';
@@ -30,6 +31,15 @@ class _SplashScreenState extends State<SplashScreen> {
       ContactService().load(),
     ]);
     CommandParser.init();
+
+    // Авто-подстановка ключа из .env (если он есть и валиден, а в хранилище ключа ещё нет),
+    // чтобы не вводить его вручную в онбординге.
+    if (!KeyManager().hasKey) {
+      final envKey = (dotenv.maybeGet('GEMINI_API_KEY') ?? '').trim();
+      if (envKey.startsWith('AIza') && envKey.length > 20) {
+        await KeyManager().addKey(envKey);
+      }
+    }
 
     await Future.delayed(const Duration(milliseconds: 1200));
     if (!mounted) return;

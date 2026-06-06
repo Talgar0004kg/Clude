@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../config/app_config.dart';
 import '../services/key_manager.dart';
 import '../utils/permission_utils.dart';
@@ -20,6 +21,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   String? _keyError;
   bool _keyValid = false;
   bool _checking = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Предзаполняем поле ключом из .env, если он там задан.
+    final envKey = (dotenv.maybeGet('GEMINI_API_KEY') ?? '').trim();
+    if (envKey.startsWith('AIza') && envKey.length > 20) {
+      _keyController.text = envKey;
+    }
+  }
 
   @override
   void dispose() {
