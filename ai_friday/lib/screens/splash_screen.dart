@@ -24,22 +24,28 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _init() async {
+    // Инициализация сервисов не должна ронять запуск: любой сбой (нет прав,
+    // отсутствует плагин и т.п.) логируем, но продолжаем до навигации.
+    await _safe(KeyManager().init());
     await Future.wait([
-      KeyManager().init(),
-      DeviceUtils.init(),
-      NotificationService.init(),
-      ContactService().load(),
+      _safe(DeviceUtils.init()),
+      _safe(NotificationService.init()),
+      _safe(ContactService().load()),
     ]);
-    CommandParser.init();
+    try {
+      CommandParser.init();
+    } catch (_) {}
 
     // Авто-подстановка ключа из .env (если он есть и валиден, а в хранилище ключа ещё нет),
     // чтобы не вводить его вручную в онбординге.
-    if (!KeyManager().hasKey) {
-      final envKey = (dotenv.maybeGet('GEMINI_API_KEY') ?? '').trim();
-      if (envKey.startsWith('AIza') && envKey.length > 20) {
-        await KeyManager().addKey(envKey);
+    try {
+      if (!KeyManager().hasKey) {
+        final envKey = (dotenv.maybeGet('GEMINI_API_KEY') ?? '').trim();
+        if (envKey.startsWith('AIza') && envKey.length > 20) {
+          await KeyManager().addKey(envKey);
+        }
       }
-    }
+    } catch (_) {}
 
     await Future.delayed(const Duration(milliseconds: 1200));
     if (!mounted) return;
@@ -51,6 +57,12 @@ class _SplashScreenState extends State<SplashScreen> {
         builder: (_) => hasKey ? const HomeScreen() : const OnboardingScreen(),
       ),
     );
+  }
+
+  Future<void> _safe(Future<void> future) async {
+    try {
+      await future;
+    } catch (_) {}
   }
 
   @override

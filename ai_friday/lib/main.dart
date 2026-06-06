@@ -5,7 +5,14 @@ import 'screens/splash_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: '.env');
+  // .env может отсутствовать или не попасть в release-бандл — это не должно
+  // ронять приложение. Инициализируем dotenv пустым, чтобы dotenv.maybeGet
+  // дальше не бросал NotInitializedError; ключ тогда вводится вручную.
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {
+    dotenv.testLoad(fileInput: '');
+  }
   runApp(const FridayApp());
 }
 
