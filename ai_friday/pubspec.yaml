@@ -38,7 +38,7 @@ dependencies:
   flutter_markdown: ^0.7.4
 
   # Audio
-  record: ^5.1.2
+  record: ^6.0.0
   audioplayers: ^6.1.0
 
   # Contacts
