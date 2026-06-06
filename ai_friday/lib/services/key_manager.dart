@@ -82,11 +82,12 @@ class KeyManager {
   Future<void> addKey(String key) async {
     final exists = _keys.any((k) => k.key == key);
     if (exists) return;
-    _keys.add(ApiKeyModel(key: key, resetDate: DateTime.now(), isActive: _keys.isEmpty));
-    if (_keys.length == 1) {
-      _keys.first.isActive = true;
-      _activeIndex = 0;
+    // Новый ключ делаем активным, чтобы приложение сразу его использовало.
+    for (final k in _keys) {
+      k.isActive = false;
     }
+    _keys.add(ApiKeyModel(key: key, resetDate: DateTime.now(), isActive: true));
+    _activeIndex = _keys.length - 1;
     await _save();
     AppLogger.info('Added API key: ${key.substring(0, 8)}...');
   }
