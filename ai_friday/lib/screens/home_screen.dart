@@ -34,6 +34,9 @@ class _HomeScreenState extends State<HomeScreen>
   final _live = LiveService();
   bool _liveMode = false; // активна ли живая сессия Gemini Live
   StreamSubscription<LiveState>? _liveSub;
+  StreamSubscription<String>? _userTextSub;
+  StreamSubscription<String>? _botTextSub;
+  StreamSubscription<String>? _actionSub;
 
   AssistantState _state = AssistantState.idle;
   String _transcript = '';
@@ -56,7 +59,29 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) setState(() => _level = lvl);
     });
     _liveSub = _live.stateStream.listen(_onLiveState);
+    // Логируем реплики и действия Live в чат.
+    _userTextSub = _live.userTextStream.listen((t) {
+      _logMessage(t, MessageRole.user);
+      if (mounted) setState(() => _transcript = t);
+    });
+    _botTextSub = _live.botTextStream.listen((t) {
+      _logMessage(t, MessageRole.assistant);
+      if (mounted) setState(() => _response = t);
+    });
+    _actionSub = _live.actionStream.listen((a) {
+      _logMessage(a, MessageRole.assistant);
+    });
     _voice.init();
+  }
+
+  void _logMessage(String text, MessageRole role) {
+    if (text.trim().isEmpty) return;
+    _context.add(Message(
+      id: '${DateTime.now().microsecondsSinceEpoch}',
+      text: text,
+      role: role,
+      timestamp: DateTime.now(),
+    ));
   }
 
   void _onLiveState(LiveState s) {
@@ -86,6 +111,9 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.removeObserver(this);
     _levelSub?.cancel();
     _liveSub?.cancel();
+    _userTextSub?.cancel();
+    _botTextSub?.cancel();
+    _actionSub?.cancel();
     _live.stop();
     _voice.stopListening();
     _voice.stopSpeaking();

@@ -39,6 +39,19 @@ class LiveService {
   Stream<LiveState> get stateStream => _stateController.stream;
   void _emit(LiveState s) => _stateController.add(s);
 
+  // Транскрипции и лог действий (для чата/истории в приложении).
+  final StreamController<String> _userTextCtrl = StreamController.broadcast();
+  final StreamController<String> _botTextCtrl = StreamController.broadcast();
+  final StreamController<String> _actionCtrl = StreamController.broadcast();
+  Stream<String> get userTextStream => _userTextCtrl.stream;
+  Stream<String> get botTextStream => _botTextCtrl.stream;
+  Stream<String> get actionStream => _actionCtrl.stream;
+
+  final StringBuffer _inBuf = StringBuffer(); // речь пользователя за ход
+  final StringBuffer _outBuf = StringBuffer(); // речь Пятницы за ход
+  bool _speaking = false; // сейчас Пятница говорит (полудуплекс: микрофон молчит)
+  final List<int> _pcmQueue = []; // буфер сэмплов ответа (сглаживает рывки сети)
+
   // Описание функций для модели (её «руки»).
   static final List<Map<String, dynamic>> _functions = [
     {
@@ -153,6 +166,9 @@ class LiveService {
           'tools': [
             {'functionDeclarations': _functions}
           ],
+          // Транскрипции речи (для записи в чат/историю).
+          'inputAudioTranscription': {},
+          'outputAudioTranscription': {},
         }
       };
 
@@ -247,16 +263,22 @@ class LiveService {
     // Проигрывание ответов (24кГц) и захват микрофона (16кГц).
     if (!_playerReady) {
       FlutterPcmSound.setup(sampleRate: 24000, channelCount: 1);
-      FlutterPcmSound.setFeedThreshold(2400);
-      FlutterPcmSound.setFeedCallback((_) {});
+      // Порог ~0.33с: колбэк подкормки вызывается заранее, без провалов.
+      FlutterPcmSound.setFeedThreshold(8000);
+      FlutterPcmSound.setFeedCallback(_onFeed);
       FlutterPcmSound.start();
       _playerReady = true;
     }
     try {
-      final stream = await _recorder.startStream(const RecordConfig(
+      final stream = await _recorder.startStream(RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
+        echoCancel: true,
+        noiseSuppress: true,
+        androidConfig: const AndroidRecordConfig(
+          audioSource: AndroidAudioSource.voiceCommunication,
+        ),
       ));
       _micSub = stream.listen(_sendAudio);
       _emit(LiveState.listening);
@@ -269,6 +291,7 @@ class LiveService {
   void _sendAudio(Uint8List data) {
     final ch = _ch;
     if (ch == null || !_active) return;
+    if (_speaking) return; // полудуплекс: не слушаем, пока сами говорим (нет петли)
     ch.sink.add(jsonEncode({
       'realtimeInput': {
         'audio': {'mimeType': 'audio/pcm;rate=16000', 'data': base64Encode(data)}
@@ -293,6 +316,22 @@ class LiveService {
   }
 
   void _onServerContent(Map<String, dynamic> sc) {
+    // Прервали (пользователь заговорил) — сбрасываем буфер речи.
+    if (sc['interrupted'] == true) {
+      _speaking = false;
+      _pcmQueue.clear(); // прекращаем доигрывать прерванный ответ
+      _emit(LiveState.listening);
+    }
+
+    // Транскрипция речи пользователя и Пятницы.
+    final inT = (sc['inputTranscription'] is Map) ? sc['inputTranscription']['text'] : null;
+    if (inT is String) _inBuf.write(inT);
+    final outT = (sc['outputTranscription'] is Map) ? sc['outputTranscription']['text'] : null;
+    if (outT is String) {
+      _speaking = true; // ответ начался — микрофон молчит (без ложного обрыва)
+      _outBuf.write(outT);
+    }
+
     final modelTurn = sc['modelTurn'] as Map<String, dynamic>?;
     if (modelTurn != null) {
       final parts = modelTurn['parts'] as List?;
@@ -301,14 +340,27 @@ class LiveService {
           final inline = p is Map ? p['inlineData'] : null;
           final data = inline is Map ? inline['data'] : null;
           if (data is String && data.isNotEmpty) {
+            _speaking = true; // полудуплекс: микрофон молчит, пока играет ответ
             _emit(LiveState.speaking);
             _playPcm(data);
           }
         }
       }
     }
+
     if (sc['turnComplete'] == true) {
-      _emit(LiveState.listening);
+      // Пишем реплики в чат.
+      final u = _inBuf.toString().trim();
+      final b = _outBuf.toString().trim();
+      _inBuf.clear();
+      _outBuf.clear();
+      if (u.isNotEmpty) _userTextCtrl.add(u);
+      if (b.isNotEmpty) _botTextCtrl.add(b);
+      // Через паузу снова слушаем (даём затихнуть динамику — без эхо-петли).
+      Future.delayed(const Duration(milliseconds: 600), () {
+        _speaking = false;
+        if (_active) _emit(LiveState.listening);
+      });
     }
   }
 
@@ -316,9 +368,24 @@ class LiveService {
     try {
       final bytes = base64Decode(b64);
       final samples = Int16List.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes ~/ 2);
-      FlutterPcmSound.feed(PcmArrayInt16.fromList(samples.toList()));
+      _pcmQueue.addAll(samples); // в очередь — отдаём в колбэке ровным потоком
     } catch (e) {
-      AppLogger.error('Live play failed', e);
+      AppLogger.error('Live decode failed', e);
+    }
+  }
+
+  // Вызывается, когда буфер проигрывателя пустеет: отдаём следующую порцию
+  // из очереди, а если её нет — короткую тишину, чтобы поток не прерывался.
+  void _onFeed(int remaining) {
+    const frame = 8000;
+    if (_pcmQueue.isNotEmpty) {
+      final n = _pcmQueue.length < frame ? _pcmQueue.length : frame;
+      final chunk = _pcmQueue.sublist(0, n);
+      _pcmQueue.removeRange(0, n);
+      FlutterPcmSound.feed(PcmArrayInt16.fromList(chunk));
+    } else {
+      // Тишина выше порога — чтобы колбэк не вызывался в плотном цикле.
+      FlutterPcmSound.feed(PcmArrayInt16.fromList(List<int>.filled(frame, 0)));
     }
   }
 
@@ -331,6 +398,9 @@ class LiveService {
       final name = (c['name'] ?? '').toString();
       final args = (c['args'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
       final res = await ActionExecutor.runFunction(name, args);
+      final ok = res['success'] == true;
+      final argStr = args.values.join(' ');
+      _actionCtrl.add('🔧 $name${argStr.isNotEmpty ? " ($argStr)" : ""} — ${ok ? "выполнено" : "не вышло"}');
       responses.add({'id': c['id'], 'name': name, 'response': res});
     }
     _ch?.sink.add(jsonEncode({
@@ -344,6 +414,10 @@ class LiveService {
       return;
     }
     _active = false;
+    _speaking = false;
+    _inBuf.clear();
+    _outBuf.clear();
+    _pcmQueue.clear();
     await _micSub?.cancel();
     _micSub = null;
     try {
