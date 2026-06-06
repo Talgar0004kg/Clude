@@ -18,8 +18,11 @@ class LiveService {
   factory LiveService() => _instance;
   LiveService._internal();
 
-  static const String _wsBase =
-      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent';
+  static const String _wsHost =
+      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage';
+  static const String _wsSuffix = 'GenerativeService.BidiGenerateContent';
+  // Перебор версий API: новая модель может требовать v1alpha.
+  static const List<String> _apiVersions = ['v1beta', 'v1alpha'];
 
   final AudioRecorder _recorder = AudioRecorder();
   WebSocketChannel? _ch;
@@ -171,49 +174,68 @@ class LiveService {
       return false;
     }
 
+    _emit(LiveState.connecting);
+    // Пробуем версии endpoint по очереди (v1beta, затем v1alpha).
+    for (final ver in _apiVersions) {
+      final ok = await _attempt(ver, key);
+      if (ok) return true;
+      await _resetConnection();
+    }
+    AppLogger.error('Live: all endpoints failed ($lastError)');
+    _active = false;
+    _emit(LiveState.idle);
+    return false;
+  }
+
+  Future<bool> _attempt(String ver, String key) async {
     try {
-      _emit(LiveState.connecting);
       _connect = Completer<bool>();
-      _ch = WebSocketChannel.connect(Uri.parse('$_wsBase?key=$key'));
+      final url = '$_wsHost.$ver.$_wsSuffix?key=$key';
+      _ch = WebSocketChannel.connect(Uri.parse(url));
       await _ch!.ready;
       _wsSub = _ch!.stream.listen(
         _onMessage,
         onError: (e) {
-          lastError = 'ошибка соединения: $e';
+          lastError = '[$ver] ошибка: $e';
           AppLogger.error('Live ws error', e);
           _failConnect();
-          _emit(LiveState.error);
         },
         onDone: () {
           if (_connect != null && !_connect!.isCompleted) {
             lastError =
-                'соединение закрыто (code ${_ch?.closeCode ?? '-'}: ${_ch?.closeReason ?? ''})';
+                '[$ver] закрыто (code ${_ch?.closeCode ?? '-'}: ${_ch?.closeReason ?? ''})';
           }
           _failConnect();
-          stop();
+          if (_active) stop();
         },
       );
       _ch!.sink.add(jsonEncode(_setupMessage()));
-      _active = true;
 
-      // Успех только после setupComplete (иначе — реальный сбой подключения).
       final ok = await _connect!.future.timeout(
-        const Duration(seconds: 15),
+        const Duration(seconds: 12),
         onTimeout: () => false,
       );
       if (!ok) {
-        if (lastError.isEmpty) lastError = 'нет ответа setupComplete (таймаут)';
-        AppLogger.error('Live: setup not confirmed ($lastError)');
-        await stop();
+        if (lastError.isEmpty) lastError = '[$ver] таймаут setupComplete';
         return false;
       }
+      _active = true;
       return true;
     } catch (e) {
-      lastError = 'исключение: $e';
+      lastError = '[$ver] исключение: $e';
       AppLogger.error('Live connect failed', e);
-      await stop();
       return false;
     }
+  }
+
+  /// Закрывает текущее соединение перед повторной попыткой (микрофон не трогаем).
+  Future<void> _resetConnection() async {
+    await _wsSub?.cancel();
+    _wsSub = null;
+    try {
+      await _ch?.sink.close();
+    } catch (_) {}
+    _ch = null;
   }
 
   void _failConnect() {
@@ -249,9 +271,7 @@ class LiveService {
     if (ch == null || !_active) return;
     ch.sink.add(jsonEncode({
       'realtimeInput': {
-        'mediaChunks': [
-          {'mimeType': 'audio/pcm;rate=16000', 'data': base64Encode(data)}
-        ]
+        'audio': {'mimeType': 'audio/pcm;rate=16000', 'data': base64Encode(data)}
       }
     }));
   }
