@@ -20,6 +20,73 @@ class ActionExecutor {
     }
   }
 
+  /// Выполняет функцию, вызванную Gemini Live (function calling). Возвращает
+  /// результат для toolResponse.
+  static Future<Map<String, dynamic>> runFunction(
+      String name, Map<String, dynamic> args) async {
+    bool ok = false;
+    try {
+      switch (name) {
+        case 'open_app':
+          ok = await IntentService.openApp((args['app'] ?? '').toString());
+          break;
+        case 'send_message':
+        case 'whatsapp':
+        case 'sms':
+          ok = await _sendMessage(
+            ActionStep(action: 'message', params: Map<String, dynamic>.from(args)),
+            defaultApp: (args['app'] ?? (name == 'sms' ? 'sms' : 'whatsapp')).toString(),
+          );
+          break;
+        case 'call':
+          final phone = _resolvePhone(
+              ActionStep(action: 'call', params: Map<String, dynamic>.from(args)));
+          ok = phone != null && await IntentService.call(phone);
+          break;
+        case 'type_text':
+        case 'type':
+          ok = await AccessibilityServiceManager.setText((args['text'] ?? '').toString());
+          break;
+        case 'tap':
+          final label = (args['label'] ?? '').toString();
+          ok = label.isNotEmpty && await AccessibilityServiceManager.tap([label]);
+          break;
+        case 'press_send':
+        case 'send':
+          ok = await AccessibilityServiceManager.pressSend();
+          break;
+        case 'open_maps':
+        case 'maps':
+          ok = await IntentService.openMaps((args['query'] ?? '').toString());
+          break;
+        case 'set_alarm':
+        case 'alarm':
+          ok = await IntentService.setAlarm(
+            hour: (args['hour'] as num?)?.toInt() ?? 0,
+            minute: (args['minute'] as num?)?.toInt() ?? 0,
+          );
+          break;
+        case 'set_timer':
+        case 'timer':
+          ok = await IntentService.setTimer((args['seconds'] as num?)?.toInt() ?? 60);
+          break;
+        case 'go_back':
+        case 'back':
+          ok = await AccessibilityServiceManager.back();
+          break;
+        case 'go_home':
+        case 'home':
+          ok = await AccessibilityServiceManager.home();
+          break;
+        default:
+          AppLogger.warn('Unknown live function: $name');
+      }
+    } catch (e) {
+      AppLogger.error('runFunction $name failed', e);
+    }
+    return {'success': ok};
+  }
+
   /// Выполняет одиночное действие {"action": ...} или набор {"steps": [...]}.
   static Future<bool> executeMap(Map<String, dynamic> data) async {
     if (data['action'] is String) {

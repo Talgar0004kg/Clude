@@ -5,6 +5,7 @@ import '../config/app_config.dart';
 import '../services/gemini_service.dart';
 import '../services/key_manager.dart';
 import '../services/voice_service.dart';
+import '../services/live_service.dart';
 import '../core/context_manager.dart';
 import '../core/security_guard.dart';
 import '../core/action_executor.dart';
@@ -30,6 +31,9 @@ class _HomeScreenState extends State<HomeScreen>
   final _context = ContextManager();
   final _keyManager = KeyManager();
   final _voice = VoiceService();
+  final _live = LiveService();
+  bool _liveMode = false; // активна ли живая сессия Gemini Live
+  StreamSubscription<LiveState>? _liveSub;
 
   AssistantState _state = AssistantState.idle;
   String _transcript = '';
@@ -51,13 +55,38 @@ class _HomeScreenState extends State<HomeScreen>
     _levelSub = _voice.levelStream.listen((lvl) {
       if (mounted) setState(() => _level = lvl);
     });
+    _liveSub = _live.stateStream.listen(_onLiveState);
     _voice.init();
+  }
+
+  void _onLiveState(LiveState s) {
+    if (!mounted) return;
+    setState(() {
+      switch (s) {
+        case LiveState.connecting:
+          _state = AssistantState.thinking;
+          break;
+        case LiveState.listening:
+          _state = AssistantState.listening;
+          break;
+        case LiveState.speaking:
+          _state = AssistantState.speaking;
+          break;
+        case LiveState.idle:
+          _state = AssistantState.idle;
+          break;
+        case LiveState.error:
+          break;
+      }
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _levelSub?.cancel();
+    _liveSub?.cancel();
+    _live.stop();
     _voice.stopListening();
     _voice.stopSpeaking();
     _orbController.dispose();
@@ -66,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_liveMode) return; // живой режим управляет аудио сам
     if (state == AppLifecycleState.resumed &&
         _serviceRunning &&
         !_stopRequested &&
@@ -86,18 +116,31 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _toggleService() async {
     if (_serviceRunning) {
       await _stopConversation();
-      await _voice.speak('Пятница отключена');
-    } else {
-      _stopRequested = false;
-      setState(() => _serviceRunning = true);
-      await _voice.speak('Пятница активирована. Слушаю вас.');
-      await _beginListening();
+      return;
     }
+    _stopRequested = false;
+    setState(() => _serviceRunning = true);
+
+    // Сначала пробуем живой режим (Gemini Live в реальном времени).
+    final live = await _live.start();
+    if (live) {
+      _liveMode = true;
+      return; // дальше всё ведёт LiveService (звук, перебивание, действия)
+    }
+
+    // Фолбэк: распознавание + текстовая модель + озвучка.
+    _liveMode = false;
+    await _voice.speak('Пятница активирована. Слушаю вас.');
+    await _beginListening();
   }
 
   /// Полная остановка (ручная).
   Future<void> _stopConversation() async {
     _stopRequested = true;
+    if (_liveMode) {
+      await _live.stop();
+      _liveMode = false;
+    }
     await _voice.stopListening();
     await _voice.stopSpeaking();
     if (mounted) {
@@ -107,6 +150,7 @@ class _HomeScreenState extends State<HomeScreen>
         _level = 0.0;
       });
     }
+    await _voice.speak('Пятница отключена');
   }
 
   /// Слушает речь (с паузой 3 сек на «договорить»).

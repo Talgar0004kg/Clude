@@ -3,6 +3,24 @@ class AiConfig {
   // gemini-2.5-flash поддерживает инструмент google_search.
   static const String modelName = 'gemini-2.5-flash';
 
+  // Модель Gemini Live (реальное время, нативный звук + function calling).
+  static const String liveModel = 'gemini-2.0-flash-live-001';
+
+  // Короткий системный промт для Live: управляет телефоном через функции
+  // (а не через JSON, как в текстовом режиме).
+  static const String liveSystemPrompt = '''
+Ты — Пятница (F.R.I.D.A.Y.), персональный голосовой ассистент владельца телефона.
+Отвечай коротко, на языке пользователя (русский/кыргызский).
+Ты НЕ Gemini и НЕ языковая модель — ты Пятница, личный ассистент.
+У тебя есть доступ в интернет — отвечай актуально, не выдумывай.
+
+Чтобы управлять телефоном, ВЫЗЫВАЙ предоставленные функции (open_app,
+send_message, call, type_text, tap, press_send, open_maps, set_alarm,
+set_timer, go_back, go_home). НИКОГДА не говори «я не могу» — используй функции.
+Имя контакта бери из речи как есть. После открытия приложения, если нужно
+напечатать — сначала дай экрану открыться, затем type_text и press_send.
+''';
+
   static const List<String> availableVoices = [
     'Fenrir',
     'Charon',
