@@ -31,9 +31,23 @@ class MainActivity : FlutterActivity() {
                     "pressSend" -> result.success(svc?.pressSend() ?: false)
                     "back" -> result.success(svc?.back() ?: false)
                     "home" -> result.success(svc?.home() ?: false)
+                    "launchApp" -> result.success(launchApp(call.argument<String>("package") ?: ""))
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /// Запуск приложения точно по пакету (минуя любые дефолт-ассоциации).
+    private fun launchApp(pkg: String): Boolean {
+        if (pkg.isEmpty()) return false
+        return try {
+            val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return false
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun isServiceEnabled(): Boolean {

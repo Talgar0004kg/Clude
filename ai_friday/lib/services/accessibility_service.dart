@@ -43,6 +43,16 @@ class AccessibilityServiceManager {
     }
   }
 
+  /// Запускает приложение точно по пакету (минуя дефолт-ассоциации Android).
+  static Future<bool> launchApp(String package) async {
+    try {
+      return await _channel.invokeMethod<bool>('launchApp', {'package': package}) ?? false;
+    } catch (e) {
+      AppLogger.error('Accessibility launchApp failed', e);
+      return false;
+    }
+  }
+
   /// Жмёт кнопку отправки (Send/Отправить и т.п.).
   static Future<bool> pressSend() async {
     try {

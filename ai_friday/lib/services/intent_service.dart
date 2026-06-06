@@ -2,6 +2,7 @@ import 'package:android_intent_plus/android_intent.dart';
 import 'package:android_intent_plus/flag.dart';
 import '../config/intent_map.dart';
 import '../utils/logger.dart';
+import 'accessibility_service.dart';
 
 class IntentService {
   static Future<bool> openApp(String appName) async {
@@ -12,6 +13,9 @@ class IntentService {
       AppLogger.warn('Unknown app: $appName');
       return false;
     }
+    // Надёжно: запуск точно по пакету (минует дефолт-ассоциации типа «Всегда → Календарь»).
+    if (await AccessibilityServiceManager.launchApp(package)) return true;
+    // Запасной путь — через интент.
     try {
       final intent = AndroidIntent(
         action: 'android.intent.action.MAIN',
