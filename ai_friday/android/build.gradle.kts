@@ -22,6 +22,7 @@ subprojects {
         if (project.hasProperty("android")) {
             val androidExt = project.extensions.findByName("android")
             if (androidExt != null) {
+                // Inject missing namespace from AndroidManifest package attr (AGP 8 requirement).
                 val getNamespace = androidExt.javaClass.methods.firstOrNull { it.name == "getNamespace" }
                 val setNamespace = androidExt.javaClass.methods.firstOrNull { it.name == "setNamespace" && it.parameterCount == 1 }
                 val currentNamespace = getNamespace?.invoke(androidExt) as? String
@@ -34,6 +35,13 @@ subprojects {
                         }
                     }
                 }
+                // Force compileSdk = 35 on every library to pick up modern android attrs
+                // (e.g. android:attr/lStar needed by Material themes) — fixes
+                // VerifyLibraryResourcesTask failures from old plugins like contacts_service.
+                val setCompileSdk = androidExt.javaClass.methods.firstOrNull {
+                    it.name == "setCompileSdkVersion" && it.parameterCount == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType
+                }
+                setCompileSdk?.invoke(androidExt, 35)
             }
         }
     }
