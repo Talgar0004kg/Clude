@@ -53,7 +53,7 @@
 
         <!-- Accessibility Service -->
         <service
-            android:name="com.flexits.flutter_accessibility_service.FlutterAccessibilityService"
+            android:name="slayer.accessibility.service.flutter_accessibility_service.AccessibilityListener"
             android:exported="true"
             android:label="Пятница"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
