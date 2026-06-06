@@ -5,7 +5,9 @@ import '../utils/logger.dart';
 
 class IntentService {
   static Future<bool> openApp(String appName) async {
-    final package = IntentMap.getPackage(appName);
+    // Известное имя → package; иначе если передан сам package (содержит точку).
+    var package = IntentMap.getPackage(appName);
+    package ??= appName.contains('.') ? appName.trim() : null;
     if (package == null) {
       AppLogger.warn('Unknown app: $appName');
       return false;
@@ -13,6 +15,7 @@ class IntentService {
     try {
       final intent = AndroidIntent(
         action: 'android.intent.action.MAIN',
+        category: 'android.intent.category.LAUNCHER',
         package: package,
         flags: [Flag.FLAG_ACTIVITY_NEW_TASK],
       );

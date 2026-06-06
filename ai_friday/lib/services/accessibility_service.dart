@@ -1,53 +1,71 @@
-import 'package:flutter_accessibility_service/flutter_accessibility_service.dart';
-import 'package:flutter_accessibility_service/accessibility_event.dart';
-import 'package:flutter_accessibility_service/constants.dart';
+import 'package:flutter/services.dart';
 import '../utils/logger.dart';
 
+/// Обёртка над собственным нативным Accessibility-сервисом (Kotlin)
+/// через MethodChannel. Позволяет печатать текст и кликать в любом приложении.
 class AccessibilityServiceManager {
+  static const MethodChannel _channel = MethodChannel('friday/accessibility');
+
   static Future<bool> isEnabled() async {
     try {
-      return await FlutterAccessibilityService.isAccessibilityPermissionEnabled();
+      return await _channel.invokeMethod<bool>('isEnabled') ?? false;
     } catch (e) {
-      AppLogger.error('Failed to check accessibility', e);
+      AppLogger.error('Accessibility isEnabled failed', e);
       return false;
     }
   }
 
-  static Future<void> requestPermission() async {
+  static Future<void> openSettings() async {
     try {
-      await FlutterAccessibilityService.requestAccessibilityPermission();
+      await _channel.invokeMethod('openSettings');
     } catch (e) {
-      AppLogger.error('Failed to request accessibility', e);
+      AppLogger.error('Accessibility openSettings failed', e);
     }
   }
 
-  static Stream<AccessibilityEvent> get eventStream =>
-      FlutterAccessibilityService.accessStream;
-
-  static Future<bool> performNodeAction(NodeAction action, AccessibilityEvent event) async {
+  /// Печатает текст в сфокусированное/первое редактируемое поле на экране.
+  static Future<bool> setText(String text) async {
     try {
-      return await FlutterAccessibilityService.performAction(event, action);
+      return await _channel.invokeMethod<bool>('setText', {'text': text}) ?? false;
     } catch (e) {
-      AppLogger.error('Failed to perform accessibility action', e);
+      AppLogger.error('Accessibility setText failed', e);
       return false;
     }
   }
 
-  static Future<bool> performGlobalAction(GlobalAction action) async {
+  /// Кликает по элементу с текстом/описанием из списка меток.
+  static Future<bool> tap(List<String> labels) async {
     try {
-      return await FlutterAccessibilityService.performGlobalAction(action);
+      return await _channel.invokeMethod<bool>('tap', {'labels': labels}) ?? false;
     } catch (e) {
-      AppLogger.error('Failed to perform global action', e);
+      AppLogger.error('Accessibility tap failed', e);
       return false;
     }
   }
 
-  static Future<List<GlobalAction>> getSystemActions() async {
+  /// Жмёт кнопку отправки (Send/Отправить и т.п.).
+  static Future<bool> pressSend() async {
     try {
-      return await FlutterAccessibilityService.getSystemActions();
+      return await _channel.invokeMethod<bool>('pressSend') ?? false;
     } catch (e) {
-      AppLogger.error('Failed to get system actions', e);
-      return [];
+      AppLogger.error('Accessibility pressSend failed', e);
+      return false;
+    }
+  }
+
+  static Future<bool> back() async {
+    try {
+      return await _channel.invokeMethod<bool>('back') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> home() async {
+    try {
+      return await _channel.invokeMethod<bool>('home') ?? false;
+    } catch (_) {
+      return false;
     }
   }
 }

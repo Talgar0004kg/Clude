@@ -20,9 +20,44 @@ class IntentMap {
     'contacts': 'com.android.contacts',
     'messages': 'com.google.android.apps.messaging',
     'play store': 'com.android.vending',
+    // Популярные приложения
+    'tiktok': 'com.zhiliaoapp.musically',
+    'vk': 'com.vkontakte.android',
+    'viber': 'com.viber.voip',
+    'facebook': 'com.facebook.katana',
+    'messenger': 'com.facebook.orca',
+    'twitter': 'com.twitter.android',
+    'x': 'com.twitter.android',
+    'snapchat': 'com.snapchat.android',
+    'yandex': 'ru.yandex.searchplugin',
+    'yandex maps': 'ru.yandex.yandexmaps',
+    'gallery': 'com.google.android.apps.photos',
+    'photos': 'com.google.android.apps.photos',
+    // Русские/киргизские названия
+    'ватсап': 'com.whatsapp',
+    'вотсап': 'com.whatsapp',
+    'телеграм': 'org.telegram.messenger',
+    'телеграмм': 'org.telegram.messenger',
+    'инстаграм': 'com.instagram.android',
+    'инста': 'com.instagram.android',
+    'ютуб': 'com.google.android.youtube',
+    'карты': 'com.google.android.apps.maps',
+    'камера': 'com.android.camera',
+    'настройки': 'com.android.settings',
+    'хром': 'com.android.chrome',
+    'почта': 'com.google.android.gm',
+    'календарь': 'com.google.android.calendar',
+    'часы': 'com.google.android.deskclock',
+    'калькулятор': 'com.android.calculator2',
+    'телефон': 'com.android.dialer',
+    'контакты': 'com.android.contacts',
+    'сообщения': 'com.google.android.apps.messaging',
+    'галерея': 'com.google.android.apps.photos',
+    'плей маркет': 'com.android.vending',
+    'тикток': 'com.zhiliaoapp.musically',
   };
 
   static String? getPackage(String appName) {
-    return appPackages[appName.toLowerCase()];
+    return appPackages[appName.toLowerCase().trim()];
   }
 }

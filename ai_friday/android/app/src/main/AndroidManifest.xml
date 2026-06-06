@@ -51,9 +51,9 @@
             </intent-filter>
         </activity>
 
-        <!-- Accessibility Service -->
+        <!-- Accessibility Service (собственный, универсальная автоматизация) -->
         <service
-            android:name="slayer.accessibility.service.flutter_accessibility_service.AccessibilityListener"
+            android:name=".FridayAccessibilityService"
             android:exported="true"
             android:label="Пятница"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
