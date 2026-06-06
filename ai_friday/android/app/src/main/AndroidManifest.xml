@@ -75,6 +75,14 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Распознавание речи (speech_to_text) на Android 11+ -->
+        <intent>
+            <action android:name="android.speech.RecognitionService"/>
+        </intent>
+        <!-- Синтез речи (flutter_tts) на Android 11+ -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE"/>
+        </intent>
         <package android:name="com.whatsapp"/>
         <package android:name="org.telegram.messenger"/>
         <package android:name="com.instagram.android"/>

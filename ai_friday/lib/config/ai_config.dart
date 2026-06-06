@@ -1,5 +1,8 @@
 class AiConfig {
-  static const String modelName = 'gemini-2.5-flash-preview-native-audio-dialog';
+  // Текстовая модель для generateContent (пакет google_generative_ai).
+  // Native-audio модель (…native-audio-dialog) работает только через Live API
+  // по WebSocket, который этот пакет не поддерживает.
+  static const String modelName = 'gemini-2.5-flash';
 
   static const List<String> availableVoices = [
     'Fenrir',

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../config/app_config.dart';
 import '../config/ai_config.dart';
 import '../services/key_manager.dart';
+import '../services/voice_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -12,7 +13,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _keyManager = KeyManager();
+  final _voice = VoiceService();
   final _keyController = TextEditingController();
+  String? _previewing;
 
   @override
   void dispose() {
@@ -59,15 +62,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ]),
           _section('Голос Пятницы', [
-            ...AiConfig.availableVoices.map((v) => ListTile(
-              leading: Icon(
-                v == AiConfig.defaultVoice ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                color: const Color(AppConfig.colorAccent),
-                size: 20,
-              ),
-              title: Text(v, style: const TextStyle(color: Color(AppConfig.colorText))),
-              onTap: () {},
-            )),
+            ...AiConfig.availableVoices.map((v) {
+              final selected = v == _voice.currentVoice;
+              return ListTile(
+                leading: Icon(
+                  selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  color: const Color(AppConfig.colorAccent),
+                  size: 20,
+                ),
+                title: Text(v, style: const TextStyle(color: Color(AppConfig.colorText))),
+                subtitle: selected
+                    ? const Text('Выбран', style: TextStyle(color: Color(AppConfig.colorSuccess), fontSize: 12))
+                    : null,
+                trailing: IconButton(
+                  icon: Icon(
+                    _previewing == v ? Icons.volume_up : Icons.play_circle_outline,
+                    color: const Color(AppConfig.colorAccent),
+                  ),
+                  tooltip: 'Прослушать пример',
+                  onPressed: () async {
+                    setState(() => _previewing = v);
+                    await _voice.previewVoice(v);
+                    if (mounted) setState(() => _previewing = null);
+                  },
+                ),
+                onTap: () async {
+                  await _voice.setVoice(v);
+                  if (mounted) setState(() {});
+                },
+              );
+            }),
           ]),
           _section('О приложении', [
             const ListTile(
