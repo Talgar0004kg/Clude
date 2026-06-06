@@ -37,6 +37,11 @@ class _HomeScreenState extends State<HomeScreen>
   String _response = '';
   bool _serviceRunning = false; // непрерывный режим разговора
   bool _stopRequested = false;
+  // Слово-активатор: в hands-free режиме запрос к ИИ уходит только при обращении.
+  bool _wakeWordEnabled = true;
+  static const List<String> _wakeWords = [
+    'пятница', 'пятницу', 'пятницы', 'пятниц', 'friday', 'фрайдей', 'фрайди', 'фрайдэй'
+  ];
   int _navIndex = 0;
   double _level = 0.0;
 
@@ -169,21 +174,41 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> processCommand(String text) async {
-    if (text.trim().isEmpty) {
+    final spoken = text.trim();
+    if (spoken.isEmpty) {
       _maybeResume();
       return;
     }
 
+    // Слово-активатор: реагируем только на обращение «Пятница …».
+    String effective = spoken;
+    if (_wakeWordEnabled) {
+      final cmd = _extractAfterWake(spoken);
+      if (cmd == null) {
+        // К Пятнице не обращались — не тратим запрос к ИИ, слушаем дальше.
+        _maybeResume();
+        return;
+      }
+      if (cmd.isEmpty) {
+        // Сказали только имя — коротко отзываемся без запроса к API.
+        await _say('Да, слушаю.');
+        _setState(AssistantState.idle);
+        _maybeResume();
+        return;
+      }
+      effective = cmd;
+    }
+
     _context.add(Message(
       id: DateTime.now().toIso8601String(),
-      text: text,
+      text: effective,
       role: MessageRole.user,
       timestamp: DateTime.now(),
     ));
     if (mounted) setState(() => _response = '');
 
     try {
-      if (!SecurityGuard.isAllowed(text)) {
+      if (!SecurityGuard.isAllowed(effective)) {
         await _say(SecurityGuard.blockMessage());
         return;
       }
@@ -191,14 +216,14 @@ class _HomeScreenState extends State<HomeScreen>
       _setState(AssistantState.thinking);
 
       // Локальные команды (без обращения к ИИ).
-      final localResult = await CommandParser.tryParse(text);
+      final localResult = await CommandParser.tryParse(effective);
       if (localResult != null && localResult.matched) {
         await _say(localResult.success ? 'Выполнено.' : 'Не удалось выполнить.');
         return;
       }
 
-      // Запрос к Gemini.
-      final reply = await _gemini.sendMessageStream(text);
+      // Запрос к Gemini — один на команду.
+      final reply = await _gemini.sendMessageStream(effective);
       if (reply == null) {
         await _say('Не удалось получить ответ. Проверьте интернет и ключ.');
         return;
@@ -206,7 +231,7 @@ class _HomeScreenState extends State<HomeScreen>
 
       final data = _parseAction(reply);
       if (data != null) {
-        // Это команда телефону: озвучиваем speech и выполняем.
+        // Это команда телефону: озвучиваем speech и выполняем все шаги локально.
         final speech = (data['speech'] as String?)?.trim();
         await _say((speech != null && speech.isNotEmpty) ? speech : 'Выполняю.');
         final ok = await ActionExecutor.executeMap(data);
@@ -232,6 +257,25 @@ class _HomeScreenState extends State<HomeScreen>
       _setState(AssistantState.idle);
       _maybeResume();
     }
+  }
+
+  /// Возвращает команду после слова-активатора «Пятница».
+  /// null — обращения не было; '' — сказали только имя.
+  String? _extractAfterWake(String phrase) {
+    final lower = phrase.toLowerCase();
+    for (final w in _wakeWords) {
+      final idx = lower.indexOf(w);
+      if (idx == -1) continue;
+      final lead = RegExp(r'^[\s,.:;!?\-—]+');
+      final trail = RegExp(r'[\s,.:;!?\-—]+$');
+      // Часть после имени («Пятница, открой …»).
+      final after = phrase.substring(idx + w.length).replaceFirst(lead, '').trim();
+      if (after.isNotEmpty) return after;
+      // Имя в конце («открой телеграм, пятница») — берём часть до имени.
+      final before = phrase.substring(0, idx).replaceFirst(trail, '').trim();
+      return before; // '' если фраза состояла только из имени
+    }
+    return null;
   }
 
   /// Показывает и проговаривает короткую фразу.

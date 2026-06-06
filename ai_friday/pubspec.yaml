@@ -11,8 +11,8 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
 
-  # AI / Gemini
-  google_generative_ai: ^0.4.6
+  # AI / Gemini (REST + Google Search grounding)
+  http: ^1.2.2
 
   # Permissions & Device
   permission_handler: ^11.3.1
