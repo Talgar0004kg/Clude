@@ -164,6 +164,7 @@ class LiveService {
             ]
           },
           'tools': [
+            {'googleSearch': {}}, // веб-поиск Google внутри живой сессии
             {'functionDeclarations': _functions}
           ],
           // Транскрипции речи (для записи в чат/историю).
