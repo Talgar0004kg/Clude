@@ -72,6 +72,7 @@ class VoiceService {
   }
 
   Future<void> _initStt() async {
+    if (_sttReady) return;
     try {
       _sttReady = await _stt.initialize(
         onStatus: (status) {

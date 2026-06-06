@@ -21,7 +21,7 @@ android {
 
     defaultConfig {
         applicationId = "com.friday.ai_friday"
-        minSdk = 23
+        minSdk = 24 // flutter_tts требует минимум API 24 (Android 7.0)
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

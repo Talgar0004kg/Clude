@@ -100,7 +100,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (mounted) setState(() => _transcript = partial);
       },
       onResult: (text) {
-        if (mounted) setState(() => _transcript = text);
+        if (mounted) setState(() {
+          _transcript = text;
+          _level = 0.0;
+        });
         processCommand(text);
       },
     );
