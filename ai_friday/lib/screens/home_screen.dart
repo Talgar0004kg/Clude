@@ -33,7 +33,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   AssistantState _state = AssistantState.idle;
   String _transcript = '';
   String _response = '';
-  bool _serviceRunning = false;
+  bool _serviceRunning = false; // непрерывный режим разговора
+  bool _stopRequested = false;
   int _navIndex = 0;
   double _level = 0.0;
 
@@ -63,39 +64,60 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (mounted) setState(() => _state = s);
   }
 
+  /// Кнопка Вкл/Выкл — включает/выключает непрерывный режим разговора.
   Future<void> _toggleService() async {
     if (_serviceRunning) {
-      await _voice.stopListening();
-      await _voice.stopSpeaking();
+      await _stopConversation();
+      await _voice.speak('Пятница отключена');
+    } else {
+      _stopRequested = false;
+      setState(() => _serviceRunning = true);
+      await _voice.speak('Пятница активирована. Слушаю вас.');
+      await _beginListening();
+    }
+  }
+
+  /// Полная остановка разговора (ручная).
+  Future<void> _stopConversation() async {
+    _stopRequested = true;
+    await _voice.stopListening();
+    await _voice.stopSpeaking();
+    if (mounted) {
       setState(() {
         _serviceRunning = false;
         _state = AssistantState.idle;
         _level = 0.0;
       });
-      await _voice.speak('Пятница отключена');
-    } else {
-      setState(() => _serviceRunning = true);
-      await _voice.speak('Пятница активирована. Слушаю вас.');
     }
   }
 
-  Future<void> _startListening() async {
-    // Повторное нажатие во время прослушивания — остановить.
-    if (_voice.isListening) {
-      await _voice.stopListening();
-      _setState(AssistantState.idle);
+  /// Нажатие на микрофон.
+  Future<void> _onMicTap() async {
+    // Если слушает или говорит — остановить (в т.ч. весь разговор).
+    if (_voice.isListening || _state == AssistantState.speaking) {
+      if (_serviceRunning) {
+        await _stopConversation();
+      } else {
+        await _voice.stopListening();
+        await _voice.stopSpeaking();
+        _setState(AssistantState.idle);
+      }
       return;
     }
-    // Если говорит — прервать озвучку.
-    await _voice.stopSpeaking();
+    // Иначе — начать слушать (одиночно, если непрерывный режим выключен).
+    await _beginListening();
+  }
 
+  /// Запускает прослушивание (с паузой 3 сек на «договорить»).
+  Future<void> _beginListening() async {
+    await _voice.stopSpeaking();
     setState(() {
       _state = AssistantState.listening;
       _transcript = '';
-      _response = '';
     });
 
     final ok = await _voice.startListening(
+      pauseSeconds: 3,
       onPartial: (partial) {
         if (mounted) setState(() => _transcript = partial);
       },
@@ -106,19 +128,49 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         });
         processCommand(text);
       },
+      onListenEnd: () {
+        // Тишина без фразы: в непрерывном режиме слушаем снова.
+        if (_serviceRunning && !_stopRequested && mounted) {
+          _scheduleResume();
+        } else {
+          _setState(AssistantState.idle);
+        }
+      },
     );
 
     if (!ok) {
       setState(() {
+        _serviceRunning = false;
         _state = AssistantState.idle;
         _response =
-            'Распознавание речи недоступно. Установите/включите Google-распознавание и разрешите микрофон.';
+            'Распознавание речи недоступно. Установите/включите Google-распознавание и разрешите доступ к микрофону.';
       });
     }
   }
 
+  /// В непрерывном режиме возобновляет прослушивание после паузы.
+  void _maybeResume() {
+    if (_serviceRunning && !_stopRequested && mounted) {
+      _scheduleResume();
+    }
+  }
+
+  void _scheduleResume() {
+    Future.delayed(const Duration(milliseconds: 500), () {
+      // Не слушаем в фоне (например, после открытия WhatsApp) — только когда
+      // приложение на экране.
+      final resumed = WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+      if (_serviceRunning && !_stopRequested && mounted && resumed && !_voice.isListening) {
+        _beginListening();
+      }
+    });
+  }
+
   Future<void> processCommand(String text) async {
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty) {
+      _maybeResume();
+      return;
+    }
 
     _context.add(Message(
       id: DateTime.now().toIso8601String(),
@@ -126,78 +178,78 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       role: MessageRole.user,
       timestamp: DateTime.now(),
     ));
+    if (mounted) setState(() => _response = '');
 
-    if (!SecurityGuard.isAllowed(text)) {
-      final msg = SecurityGuard.blockMessage();
-      setState(() {
-        _state = AssistantState.speaking;
-        _response = msg;
-      });
-      await _voice.speak(msg);
+    try {
+      if (!SecurityGuard.isAllowed(text)) {
+        await _say(SecurityGuard.blockMessage());
+        return;
+      }
+
+      _setState(AssistantState.thinking);
+
+      // Локальные команды (без обращения к ИИ).
+      final localResult = await CommandParser.tryParse(text);
+      if (localResult != null && localResult.matched) {
+        await _say(localResult.success ? 'Выполнено.' : 'Не удалось выполнить.');
+        return;
+      }
+
+      // Запрос к Gemini.
+      final reply = await _gemini.sendMessageStream(text);
+      if (reply == null) {
+        await _say('Не удалось получить ответ. Проверьте интернет и ключ.');
+        return;
+      }
+
+      final data = _parseAction(reply);
+      if (data != null) {
+        // Это команда телефону: озвучиваем speech и выполняем.
+        final speech = (data['speech'] as String?)?.trim();
+        await _say((speech != null && speech.isNotEmpty) ? speech : 'Выполняю.');
+        final ok = await ActionExecutor.executeMap(data);
+        if (!ok) {
+          await _voice.speak('Не получилось. Проверьте, что контакт есть в телефоне и приложение установлено.');
+        }
+      } else {
+        // Обычный ответ — проговариваем.
+        if (mounted) setState(() {
+          _state = AssistantState.speaking;
+          _response = reply;
+        });
+        await _voice.speak(reply);
+      }
+
+      _context.add(Message(
+        id: '${DateTime.now().toIso8601String()}_r',
+        text: reply,
+        role: MessageRole.assistant,
+        timestamp: DateTime.now(),
+      ));
+    } finally {
       _setState(AssistantState.idle);
-      return;
+      _maybeResume();
     }
-
-    _setState(AssistantState.thinking);
-
-    // Локальные команды (без обращения к ИИ).
-    final localResult = await CommandParser.tryParse(text);
-    if (localResult != null && localResult.matched) {
-      final reply = localResult.success ? 'Выполнено.' : 'Не удалось выполнить.';
-      setState(() {
-        _state = AssistantState.speaking;
-        _response = reply;
-      });
-      await _voice.speak(reply);
-      _setState(AssistantState.idle);
-      return;
-    }
-
-    // Запрос к Gemini.
-    final reply = await _gemini.sendMessageStream(text, onChunk: (chunk) {
-      if (mounted) setState(() => _response += chunk);
-    });
-
-    if (reply == null) {
-      const err = 'Не удалось получить ответ. Проверьте интернет и ключ.';
-      setState(() {
-        _state = AssistantState.speaking;
-        _response = err;
-      });
-      await _voice.speak(err);
-      _setState(AssistantState.idle);
-      return;
-    }
-
-    // Если ответ — JSON с действиями, выполняем и озвучиваем поле speech.
-    String speakText = reply;
-    if (TextUtils.isJson(reply)) {
-      speakText = _extractSpeech(reply) ?? 'Выполняю.';
-      setState(() {
-        _state = AssistantState.speaking;
-        _response = speakText;
-      });
-      await _voice.speak(speakText);
-      await ActionExecutor.execute(reply);
-    } else {
-      _setState(AssistantState.speaking);
-      await _voice.speak(speakText);
-    }
-
-    _context.add(Message(
-      id: '${DateTime.now().toIso8601String()}_r',
-      text: reply,
-      role: MessageRole.assistant,
-      timestamp: DateTime.now(),
-    ));
-
-    _setState(AssistantState.idle);
   }
 
-  String? _extractSpeech(String jsonStr) {
+  /// Показывает и проговаривает короткую фразу.
+  Future<void> _say(String msg) async {
+    if (mounted) setState(() {
+      _state = AssistantState.speaking;
+      _response = msg;
+    });
+    await _voice.speak(msg);
+  }
+
+  /// Если ответ ИИ — JSON-команда телефону, возвращает её как map, иначе null.
+  Map<String, dynamic>? _parseAction(String reply) {
+    final jsonStr = TextUtils.extractJson(reply);
+    if (jsonStr == null) return null;
     try {
-      final map = jsonDecode(jsonStr);
-      if (map is Map && map['speech'] is String) return map['speech'] as String;
+      final d = jsonDecode(jsonStr);
+      if (d is Map && (d['action'] is String || d['steps'] is List)) {
+        return Map<String, dynamic>.from(d);
+      }
     } catch (_) {}
     return null;
   }
@@ -293,12 +345,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Column(
         children: [
           GestureDetector(
-            onTap: _startListening,
+            onTap: _onMicTap,
             child: Container(
               width: 72,
               height: 72,
               decoration: BoxDecoration(
-                color: _state == AssistantState.listening
+                color: (_state == AssistantState.listening || _state == AssistantState.speaking)
                     ? const Color(AppConfig.colorError)
                     : const Color(AppConfig.colorAccent),
                 shape: BoxShape.circle,
@@ -311,7 +363,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ],
               ),
               child: Icon(
-                _state == AssistantState.listening ? Icons.stop : Icons.mic,
+                (_state == AssistantState.listening || _state == AssistantState.speaking)
+                    ? Icons.stop
+                    : Icons.mic,
                 color: Colors.white,
                 size: 32,
               ),

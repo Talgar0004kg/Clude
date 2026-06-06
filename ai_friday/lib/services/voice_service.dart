@@ -55,6 +55,12 @@ class VoiceService {
 
   Completer<void>? _speakCompleter;
 
+  // Ручная финализация по тишине (ждём паузу, чтобы дать договорить).
+  Timer? _silenceTimer;
+  bool _delivered = false;
+  String _lastWords = '';
+  void Function()? _onListenEnd;
+
   Future<void> init() async {
     await _loadVoice();
     await _initStt();
@@ -78,6 +84,15 @@ class VoiceService {
         onStatus: (status) {
           if (status == 'done' || status == 'notListening') {
             _listening = false;
+            _levelController.add(0.0);
+            // Сессия закончилась без распознанной фразы — сообщаем (для
+            // непрерывного режима, чтобы возобновить прослушивание).
+            if (!_delivered) {
+              final cb = _onListenEnd;
+              _onListenEnd = null;
+              _silenceTimer?.cancel();
+              cb?.call();
+            }
           }
         },
         onError: (err) {
@@ -135,6 +150,8 @@ class VoiceService {
   Future<bool> startListening({
     required void Function(String finalText) onResult,
     void Function(String partial)? onPartial,
+    void Function()? onListenEnd,
+    int pauseSeconds = 3,
   }) async {
     if (!_sttReady) {
       await _initStt();
@@ -143,30 +160,50 @@ class VoiceService {
     if (_listening) return true;
 
     await stopSpeaking();
+    _silenceTimer?.cancel();
     _listening = true;
+    _delivered = false;
+    _lastWords = '';
+    _onListenEnd = onListenEnd;
+
+    void deliver(String text) {
+      if (_delivered) return;
+      _delivered = true;
+      _onListenEnd = null;
+      _silenceTimer?.cancel();
+      final trimmed = text.trim();
+      if (trimmed.isNotEmpty) onResult(trimmed);
+    }
 
     try {
       await _stt.listen(
         onResult: (SpeechRecognitionResult r) {
           final words = r.recognizedWords;
-          if (!r.finalResult) {
+          if (words.trim().isNotEmpty) {
+            _lastWords = words;
             _partialController.add(words);
             onPartial?.call(words);
-          } else {
-            _listening = false;
-            if (words.trim().isNotEmpty) onResult(words.trim());
+            // Каждое новое слово сбрасывает таймер тишины — даём договорить.
+            _silenceTimer?.cancel();
+            _silenceTimer = Timer(Duration(seconds: pauseSeconds), () {
+              deliver(_lastWords);
+              stopListening();
+            });
+          }
+          if (r.finalResult && words.trim().isNotEmpty) {
+            deliver(words);
           }
         },
         localeId: 'ru_RU',
         listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
+        pauseFor: Duration(seconds: pauseSeconds + 7),
         onSoundLevelChange: (level) {
           _levelController.add(_normalizeLevel(level));
         },
         listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: true,
-          listenMode: ListenMode.confirmation,
+          listenMode: ListenMode.dictation,
         ),
       );
       return true;
@@ -178,6 +215,7 @@ class VoiceService {
   }
 
   Future<void> stopListening() async {
+    _silenceTimer?.cancel();
     if (!_listening) return;
     _listening = false;
     try {

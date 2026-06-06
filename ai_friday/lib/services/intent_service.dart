@@ -104,6 +104,25 @@ class IntentService {
     }
   }
 
+  /// Открывает чат WhatsApp с уже введённым текстом (остаётся нажать «отправить»).
+  /// Номер приводится к международному виду (только цифры).
+  static Future<bool> sendWhatsApp(String phone, String message) async {
+    try {
+      final digits = phone.replaceAll(RegExp(r'[^0-9]'), '');
+      if (digits.isEmpty) return false;
+      final intent = AndroidIntent(
+        action: 'android.intent.action.VIEW',
+        data: 'https://wa.me/$digits?text=${Uri.encodeComponent(message)}',
+        flags: [Flag.FLAG_ACTIVITY_NEW_TASK],
+      );
+      await intent.launch();
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to open WhatsApp', e);
+      return false;
+    }
+  }
+
   static Future<bool> openSettings() async {
     try {
       const intent = AndroidIntent(action: 'android.settings.SETTINGS');

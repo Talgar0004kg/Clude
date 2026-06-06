@@ -12,7 +12,19 @@ class TextUtils {
   }
 
   static bool isJson(String text) {
-    final t = text.trim();
-    return t.startsWith('{') && t.endsWith('}');
+    return extractJson(text) != null;
+  }
+
+  /// Извлекает JSON-объект из ответа ИИ: убирает markdown-обёртку ```json```
+  /// и берёт подстроку от первой { до последней }. Возвращает null, если нет.
+  static String? extractJson(String text) {
+    var t = text.trim();
+    if (t.startsWith('```')) {
+      t = t.replaceFirst(RegExp(r'^```[a-zA-Z]*\s*'), '').replaceFirst(RegExp(r'```\s*$'), '').trim();
+    }
+    final start = t.indexOf('{');
+    final end = t.lastIndexOf('}');
+    if (start == -1 || end == -1 || end <= start) return null;
+    return t.substring(start, end + 1);
   }
 }
