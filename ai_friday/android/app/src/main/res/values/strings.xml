@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Пятница</string>
+    <string name="accessibility_description">Пятница использует специальные возможности для управления приложениями по голосовым командам</string>
+</resources>

@@ -1,0 +1,72 @@
+name: ai_friday
+description: "Пятница (F.R.I.D.A.Y.) — Персональный AI голосовой ассистент"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # AI / Gemini
+  google_generative_ai: ^0.4.6
+
+  # Permissions & Device
+  permission_handler: ^11.3.1
+  device_info_plus: ^10.1.2
+  app_settings: ^5.1.1
+
+  # Storage
+  shared_preferences: ^2.3.3
+  sqflite: ^2.3.3
+  path_provider: ^2.1.4
+
+  # Environment
+  flutter_dotenv: ^5.2.1
+
+  # State Management
+  provider: ^6.1.2
+
+  # Network
+  connectivity_plus: ^6.1.0
+
+  # UI / Animation
+  lottie: ^3.1.2
+  flutter_markdown: ^0.7.4
+
+  # Audio
+  record: ^5.1.2
+  audioplayers: ^6.1.0
+
+  # Contacts
+  contacts_service: ^0.6.3
+
+  # Android Intents
+  android_intent_plus: ^5.0.0
+
+  # Notifications & Background
+  flutter_local_notifications: ^17.2.3
+  workmanager: ^0.5.2
+
+  # Overlay
+  flutter_overlay_window: ^0.4.1
+
+  # Accessibility
+  flutter_accessibility_service: ^0.3.0
+
+  # Home Widget
+  home_widget: ^0.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
+    - assets/

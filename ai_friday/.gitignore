@@ -1,0 +1,40 @@
+# Secrets & Environment
+.env
+*.keystore
+*.jks
+google-services.json
+key.properties
+
+# Flutter / Dart
+**/doc/api/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Android Studio build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Symbolication / Obfuscation
+app.*.symbols
+app.*.map.json
+
+# Misc
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.history
+migrate_working_dir/
