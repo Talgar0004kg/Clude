@@ -32,6 +32,13 @@ class MainActivity : FlutterActivity() {
                     "back" -> result.success(svc?.back() ?: false)
                     "home" -> result.success(svc?.home() ?: false)
                     "launchApp" -> result.success(launchApp(call.argument<String>("package") ?: ""))
+                    "readScreen" -> result.success(svc?.readScreen() ?: "")
+                    "tapXY" -> result.success(
+                        svc?.tapCoordinate(call.argument<Int>("x") ?: 0, call.argument<Int>("y") ?: 0) ?: false
+                    )
+                    "scroll" -> result.success(
+                        svc?.scrollScreen(call.argument<String>("direction") ?: "down") ?: false
+                    )
                     else -> result.notImplemented()
                 }
             }

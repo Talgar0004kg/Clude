@@ -87,11 +87,35 @@ class LiveService {
     },
     {
       'name': 'type_text',
-      'description': 'Напечатать текст в активное текстовое поле на экране',
+      'description': 'Напечатать текст в активное текстовое поле на экране (мгновенно)',
       'parameters': {
         'type': 'object',
         'properties': {'text': {'type': 'string'}},
         'required': ['text']
+      }
+    },
+    {
+      'name': 'read_screen',
+      'description':
+          'Прочитать текущий экран: список элементов с текстом/описанием и координатами @x,y. Вызывай ПЕРЕД действиями в приложении и ПОСЛЕ них, чтобы видеть результат.',
+      'parameters': {'type': 'object', 'properties': {}}
+    },
+    {
+      'name': 'click_coordinate',
+      'description': 'Тапнуть по координатам экрана (используй @x,y из read_screen)',
+      'parameters': {
+        'type': 'object',
+        'properties': {'x': {'type': 'integer'}, 'y': {'type': 'integer'}},
+        'required': ['x', 'y']
+      }
+    },
+    {
+      'name': 'scroll_screen',
+      'description': 'Прокрутить экран в направлении: up, down, left, right',
+      'parameters': {
+        'type': 'object',
+        'properties': {'direction': {'type': 'string'}},
+        'required': ['direction']
       }
     },
     {
@@ -400,8 +424,10 @@ class LiveService {
       final args = (c['args'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
       final res = await ActionExecutor.runFunction(name, args);
       final ok = res['success'] == true;
-      final argStr = args.values.join(' ');
-      _actionCtrl.add('🔧 $name${argStr.isNotEmpty ? " ($argStr)" : ""} — ${ok ? "выполнено" : "не вышло"}');
+      if (name != 'read_screen') {
+        final argStr = args.values.join(' ');
+        _actionCtrl.add('🔧 $name${argStr.isNotEmpty ? " ($argStr)" : ""} — ${ok ? "выполнено" : "не вышло"}');
+      }
       responses.add({'id': c['id'], 'name': name, 'response': res});
     }
     _ch?.sink.add(jsonEncode({

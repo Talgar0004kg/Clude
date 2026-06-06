@@ -63,6 +63,36 @@ class AccessibilityServiceManager {
     }
   }
 
+  /// Читает текущий экран как компактный текст (глаза агента).
+  static Future<String> readScreen() async {
+    try {
+      return await _channel.invokeMethod<String>('readScreen') ?? '';
+    } catch (e) {
+      AppLogger.error('Accessibility readScreen failed', e);
+      return '';
+    }
+  }
+
+  /// Тап по координатам экрана.
+  static Future<bool> tapXY(int x, int y) async {
+    try {
+      return await _channel.invokeMethod<bool>('tapXY', {'x': x, 'y': y}) ?? false;
+    } catch (e) {
+      AppLogger.error('Accessibility tapXY failed', e);
+      return false;
+    }
+  }
+
+  /// Скролл экрана: up/down/left/right.
+  static Future<bool> scroll(String direction) async {
+    try {
+      return await _channel.invokeMethod<bool>('scroll', {'direction': direction}) ?? false;
+    } catch (e) {
+      AppLogger.error('Accessibility scroll failed', e);
+      return false;
+    }
+  }
+
   static Future<bool> back() async {
     try {
       return await _channel.invokeMethod<bool>('back') ?? false;

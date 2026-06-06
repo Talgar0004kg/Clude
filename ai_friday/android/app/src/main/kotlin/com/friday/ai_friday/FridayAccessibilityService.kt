@@ -1,6 +1,9 @@
 package com.friday.ai_friday
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -99,4 +102,68 @@ class FridayAccessibilityService : AccessibilityService() {
 
     fun back(): Boolean = performGlobalAction(GLOBAL_ACTION_BACK)
     fun home(): Boolean = performGlobalAction(GLOBAL_ACTION_HOME)
+
+    /** Сериализует дерево экрана в компактный текст для модели (глаза агента). */
+    fun readScreen(): String {
+        val root = rootInActiveWindow ?: return "пустой экран"
+        val sb = StringBuilder()
+        sb.append("Экран приложения: ").append(root.packageName ?: "?").append('\n')
+        var count = 0
+        fun walk(n: AccessibilityNodeInfo?) {
+            if (n == null || count >= 120) return
+            val t = n.text?.toString()?.trim() ?: ""
+            val d = n.contentDescription?.toString()?.trim() ?: ""
+            if (t.isNotEmpty() || d.isNotEmpty()) {
+                val r = Rect()
+                n.getBoundsInScreen(r)
+                val cx = (r.left + r.right) / 2
+                val cy = (r.top + r.bottom) / 2
+                val label = if (t.isNotEmpty()) "\"$t\"" else "($d)"
+                val flags = buildString {
+                    if (n.isClickable) append("[клик]")
+                    if (n.isEditable) append("[поле]")
+                }
+                sb.append(label).append(' ').append(flags).append(" @").append(cx).append(',').append(cy).append('\n')
+                count++
+            }
+            for (i in 0 until n.childCount) walk(n.getChild(i))
+        }
+        walk(root)
+        return sb.toString().take(4000)
+    }
+
+    /** Тап по координатам экрана (жест). */
+    fun tapCoordinate(x: Int, y: Int): Boolean {
+        return try {
+            val path = Path()
+            path.moveTo(x.toFloat(), y.toFloat())
+            val stroke = GestureDescription.StrokeDescription(path, 0, 60)
+            dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Скролл экрана жестом: up/down/left/right. */
+    fun scrollScreen(direction: String): Boolean {
+        return try {
+            val dm = resources.displayMetrics
+            val w = dm.widthPixels.toFloat()
+            val h = dm.heightPixels.toFloat()
+            val cx = w / 2f
+            val cy = h / 2f
+            val path = Path()
+            when (direction.lowercase()) {
+                "up" -> { path.moveTo(cx, h * 0.3f); path.lineTo(cx, h * 0.75f) }
+                "down" -> { path.moveTo(cx, h * 0.75f); path.lineTo(cx, h * 0.3f) }
+                "left" -> { path.moveTo(w * 0.8f, cy); path.lineTo(w * 0.2f, cy) }
+                "right" -> { path.moveTo(w * 0.2f, cy); path.lineTo(w * 0.8f, cy) }
+                else -> { path.moveTo(cx, h * 0.75f); path.lineTo(cx, h * 0.3f) }
+            }
+            val stroke = GestureDescription.StrokeDescription(path, 0, 300)
+            dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

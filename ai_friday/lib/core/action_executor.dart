@@ -45,7 +45,19 @@ class ActionExecutor {
           break;
         case 'type_text':
         case 'type':
+        case 'input_text':
           ok = await AccessibilityServiceManager.setText((args['text'] ?? '').toString());
+          break;
+        case 'read_screen':
+          final screen = await AccessibilityServiceManager.readScreen();
+          return {'success': true, 'screen': screen};
+        case 'click_coordinate':
+          final x = (args['x'] as num?)?.toInt() ?? 0;
+          final y = (args['y'] as num?)?.toInt() ?? 0;
+          ok = await AccessibilityServiceManager.tapXY(x, y);
+          break;
+        case 'scroll_screen':
+          ok = await AccessibilityServiceManager.scroll((args['direction'] ?? 'down').toString());
           break;
         case 'tap':
           final label = (args['label'] ?? '').toString();
