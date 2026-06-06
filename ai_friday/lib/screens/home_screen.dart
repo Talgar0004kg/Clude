@@ -9,6 +9,7 @@ import '../core/context_manager.dart';
 import '../core/security_guard.dart';
 import '../core/action_executor.dart';
 import '../core/command_parser.dart';
+import '../services/intent_service.dart';
 import '../models/message.dart';
 import '../utils/text_utils.dart';
 import '../widgets/waveform_widget.dart';
@@ -24,7 +25,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   final _gemini = GeminiService();
   final _context = ContextManager();
   final _keyManager = KeyManager();
@@ -44,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _orbController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
     _levelSub = _voice.levelStream.listen((lvl) {
       if (mounted) setState(() => _level = lvl);
@@ -53,11 +56,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _levelSub?.cancel();
     _voice.stopListening();
     _voice.stopSpeaking();
     _orbController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Вернулись в приложение в активном режиме — снова слушаем.
+    if (state == AppLifecycleState.resumed &&
+        _serviceRunning &&
+        !_stopRequested &&
+        !_voice.isListening &&
+        _state != AssistantState.speaking &&
+        _state != AssistantState.thinking) {
+      _beginListening();
+    } else if (state == AppLifecycleState.paused) {
+      _voice.stopListening();
+    }
   }
 
   void _setState(AssistantState s) {
@@ -89,23 +108,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _level = 0.0;
       });
     }
-  }
-
-  /// Нажатие на микрофон.
-  Future<void> _onMicTap() async {
-    // Если слушает или говорит — остановить (в т.ч. весь разговор).
-    if (_voice.isListening || _state == AssistantState.speaking) {
-      if (_serviceRunning) {
-        await _stopConversation();
-      } else {
-        await _voice.stopListening();
-        await _voice.stopSpeaking();
-        _setState(AssistantState.idle);
-      }
-      return;
-    }
-    // Иначе — начать слушать (одиночно, если непрерывный режим выключен).
-    await _beginListening();
   }
 
   /// Запускает прослушивание (с паузой 3 сек на «договорить»).
@@ -324,63 +326,79 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _stateText() {
-    final labels = {
-      AssistantState.idle: 'Нажмите и говорите',
-      AssistantState.listening: 'Слушаю...',
-      AssistantState.thinking: 'Обрабатываю...',
-      AssistantState.speaking: 'Отвечаю...',
-    };
+    String label;
+    if (!_serviceRunning) {
+      label = 'Выключено — нажмите «Включить»';
+    } else {
+      label = {
+            AssistantState.idle: 'Готова, говорите',
+            AssistantState.listening: 'Слушаю...',
+            AssistantState.thinking: 'Обрабатываю...',
+            AssistantState.speaking: 'Отвечаю...',
+          }[_state] ??
+          '';
+    }
     return Text(
-      labels[_state] ?? '',
+      label,
       style: TextStyle(
-        color: _state == AssistantState.idle ? const Color(0xFF6B7280) : const Color(AppConfig.colorAccent),
+        color: !_serviceRunning ? const Color(0xFF6B7280) : const Color(AppConfig.colorAccent),
         fontSize: 16,
       ),
     );
   }
 
   Widget _bottomControls() {
+    final active = _serviceRunning;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
       child: Column(
         children: [
+          // Главная кнопка: включить / выключить ассистента (hands-free).
           GestureDetector(
-            onTap: _onMicTap,
+            onTap: _toggleService,
             child: Container(
-              width: 72,
-              height: 72,
+              width: 96,
+              height: 96,
               decoration: BoxDecoration(
-                color: (_state == AssistantState.listening || _state == AssistantState.speaking)
-                    ? const Color(AppConfig.colorError)
-                    : const Color(AppConfig.colorAccent),
+                color: active ? const Color(AppConfig.colorError) : const Color(AppConfig.colorAccent),
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(AppConfig.colorAccent).withValues(alpha: 0.4),
-                    blurRadius: 20,
-                    spreadRadius: 4,
+                    color: (active ? const Color(AppConfig.colorError) : const Color(AppConfig.colorAccent))
+                        .withValues(alpha: 0.45),
+                    blurRadius: 26,
+                    spreadRadius: 6,
                   ),
                 ],
               ),
               child: Icon(
-                (_state == AssistantState.listening || _state == AssistantState.speaking)
-                    ? Icons.stop
-                    : Icons.mic,
+                active ? Icons.stop_rounded : Icons.power_settings_new,
                 color: Colors.white,
-                size: 32,
+                size: 44,
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
+          Text(
+            active ? 'Выключить' : 'Включить',
+            style: TextStyle(
+              color: active ? const Color(AppConfig.colorError) : const Color(AppConfig.colorText),
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 18),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _quickBtn(Icons.phone, 'Звонок', () {}),
-              _quickBtn(Icons.message, 'Сообщение', () {}),
-              _quickBtn(Icons.calendar_today, 'Календарь', () {}),
-              _quickBtn(Icons.lock_outline, 'Приватно', () {
-                _context.setPrivateMode(!_context.privateMode);
-              }),
+              _quickBtn(Icons.phone, 'Телефон', () => IntentService.openApp('phone')),
+              _quickBtn(Icons.message, 'Сообщения', () => IntentService.openApp('messages')),
+              _quickBtn(Icons.calendar_today, 'Календарь', () => IntentService.openApp('calendar')),
+              _quickBtn(
+                _context.privateMode ? Icons.lock : Icons.lock_open,
+                'Приватно',
+                () => setState(() => _context.setPrivateMode(!_context.privateMode)),
+              ),
             ],
           ),
         ],
