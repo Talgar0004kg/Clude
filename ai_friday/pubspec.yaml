@@ -16,7 +16,7 @@ dependencies:
 
   # Gemini Live API (реальное время): WebSocket + потоковое аудио
   web_socket_channel: ^3.0.0
-  record: ^5.0.0
+  record: ^6.2.0
   flutter_pcm_sound: ^3.0.0
 
   # Permissions & Device
