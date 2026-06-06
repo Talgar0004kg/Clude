@@ -43,6 +43,21 @@ class AccessibilityServiceManager {
     }
   }
 
+  /// Запускает foreground-сервис (постоянное уведомление + аудиофокус).
+  static Future<void> startForeground() async {
+    try {
+      await _channel.invokeMethod('startForeground');
+    } catch (e) {
+      AppLogger.error('startForeground failed', e);
+    }
+  }
+
+  static Future<void> stopForeground() async {
+    try {
+      await _channel.invokeMethod('stopForeground');
+    } catch (_) {}
+  }
+
   /// Запускает приложение точно по пакету (минуя дефолт-ассоциации Android).
   static Future<bool> launchApp(String package) async {
     try {

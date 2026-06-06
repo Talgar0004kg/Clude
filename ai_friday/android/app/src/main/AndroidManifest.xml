@@ -53,6 +53,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Foreground-сервис живой сессии (чтобы процесс не убивался) -->
+        <service
+            android:name=".FridayForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"/>
+
         <!-- Accessibility Service (собственный, универсальная автоматизация) -->
         <service
             android:name=".FridayAccessibilityService"

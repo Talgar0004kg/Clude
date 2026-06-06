@@ -1,6 +1,7 @@
 package com.friday.ai_friday
 
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -39,6 +40,16 @@ class MainActivity : FlutterActivity() {
                     "scroll" -> result.success(
                         svc?.scrollScreen(call.argument<String>("direction") ?: "down") ?: false
                     )
+                    "startForeground" -> {
+                        val i = Intent(this, FridayForegroundService::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(i)
+                        else startService(i)
+                        result.success(true)
+                    }
+                    "stopForeground" -> {
+                        stopService(Intent(this, FridayForegroundService::class.java))
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }

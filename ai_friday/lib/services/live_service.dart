@@ -30,6 +30,9 @@ class LiveService {
   StreamSubscription<Uint8List>? _micSub;
   bool _active = false;
   bool _playerReady = false;
+  bool _userStopped = false; // остановлено пользователем (не переподключаться)
+  bool _reconnecting = false;
+  int _reconnectAttempts = 0;
   Completer<bool>? _connect; // завершается true при setupComplete
   String lastError = ''; // последняя причина сбоя (для показа пользователю)
 
@@ -51,6 +54,7 @@ class LiveService {
   final StringBuffer _outBuf = StringBuffer(); // речь Пятницы за ход
   bool _speaking = false; // сейчас Пятница говорит (полудуплекс: микрофон молчит)
   final List<int> _pcmQueue = []; // буфер сэмплов ответа (сглаживает рывки сети)
+  List<Map<String, String>> _seedHistory = []; // прошлый диалог для контекста
 
   // Описание функций для модели (её «руки»).
   static final List<Map<String, dynamic>> _functions = [
@@ -197,9 +201,12 @@ class LiveService {
         }
       };
 
-  /// Запускает живую сессию. Возвращает false, если не удалось (нужен фолбэк).
-  Future<bool> start() async {
+  /// Запускает живую сессию. [history] — прошлый диалог для контекста.
+  /// Возвращает false, если не удалось подключиться.
+  Future<bool> start({List<Map<String, String>> history = const []}) async {
     if (_active) return true;
+    _userStopped = false;
+    _seedHistory = history;
     lastError = '';
     final key = KeyManager().getActiveKey();
     if (key == null) {
@@ -242,12 +249,19 @@ class LiveService {
           _failConnect();
         },
         onDone: () {
-          if (_connect != null && !_connect!.isCompleted) {
+          final wasConnecting = _connect != null && !_connect!.isCompleted;
+          if (wasConnecting) {
             lastError =
                 '[$ver] закрыто (code ${_ch?.closeCode ?? '-'}: ${_ch?.closeReason ?? ''})';
           }
           _failConnect();
-          if (_active) stop();
+          // Сессия оборвалась после подключения — переподключаемся (если не
+          // остановлено пользователем). Это чинит «пропадает через 1-2 минуты».
+          if (!wasConnecting && _active && !_userStopped) {
+            _scheduleReconnect();
+          } else if (!wasConnecting) {
+            stop();
+          }
         },
       );
       _ch!.sink.add(jsonEncode(_setupMessage()));
@@ -283,8 +297,50 @@ class LiveService {
     if (_connect != null && !_connect!.isCompleted) _connect!.complete(false);
   }
 
+  /// Авто-переподключение после обрыва сессии (с нарастающей задержкой).
+  void _scheduleReconnect() {
+    if (_reconnecting || _userStopped) return;
+    _reconnecting = true;
+    _reconnectAttempts++;
+    () async {
+      await stop();
+      if (_userStopped || _reconnectAttempts > 5) {
+        _reconnecting = false;
+        return;
+      }
+      _emit(LiveState.connecting);
+      await Future.delayed(Duration(seconds: 2 * _reconnectAttempts));
+      _reconnecting = false;
+      if (_userStopped) return;
+      await start(history: _seedHistory);
+    }();
+  }
+
+  /// Остановка пользователем — без авто-переподключения.
+  Future<void> stopByUser() async {
+    _userStopped = true;
+    await stop();
+  }
+
   Future<void> _onSetupComplete() async {
     if (_connect != null && !_connect!.isCompleted) _connect!.complete(true);
+    _reconnectAttempts = 0;
+
+    // Засев контекста прошлого диалога (без ответа модели).
+    if (_seedHistory.isNotEmpty) {
+      final turns = _seedHistory
+          .map((m) => {
+                'role': m['role'] == 'assistant' ? 'model' : 'user',
+                'parts': [
+                  {'text': m['text'] ?? ''}
+                ]
+              })
+          .toList();
+      _ch?.sink.add(jsonEncode({
+        'clientContent': {'turns': turns, 'turnComplete': false}
+      }));
+    }
+
     // Проигрывание ответов (24кГц) и захват микрофона (16кГц).
     if (!_playerReady) {
       FlutterPcmSound.setup(sampleRate: 24000, channelCount: 1);
@@ -456,10 +512,9 @@ class LiveService {
       await _ch?.sink.close();
     } catch (_) {}
     _ch = null;
-    try {
-      FlutterPcmSound.release();
-    } catch (_) {}
-    _playerReady = false;
+    // ВАЖНО: плеер НЕ release()'им между сессиями — после release повторный
+    // setup не поднимает звук (синтез пропадает до перезапуска приложения).
+    // Он остаётся живым и в простое играет тишину через _onFeed.
     _emit(LiveState.idle);
   }
 }

@@ -6,6 +6,7 @@ import '../services/gemini_service.dart';
 import '../services/key_manager.dart';
 import '../services/voice_service.dart';
 import '../services/live_service.dart';
+import '../services/accessibility_service.dart';
 import '../core/context_manager.dart';
 import '../core/security_guard.dart';
 import '../core/action_executor.dart';
@@ -72,6 +73,10 @@ class _HomeScreenState extends State<HomeScreen>
       _logMessage(a, MessageRole.assistant);
     });
     _voice.init();
+    // Загружаем историю прошлых бесед из БД (для чата и контекста).
+    _context.loadFromDb().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _logMessage(String text, MessageRole role) {
@@ -114,7 +119,8 @@ class _HomeScreenState extends State<HomeScreen>
     _userTextSub?.cancel();
     _botTextSub?.cancel();
     _actionSub?.cancel();
-    _live.stop();
+    _live.stopByUser();
+    AccessibilityServiceManager.stopForeground();
     _voice.stopListening();
     _voice.stopSpeaking();
     _orbController.dispose();
@@ -154,10 +160,17 @@ class _HomeScreenState extends State<HomeScreen>
       _response = 'Подключаюсь к Пятнице...';
     });
 
+    // Контекст прошлых бесед → в Live (чтобы помнила историю).
+    final history = _context
+        .getRecent(count: 20)
+        .map((m) => {'role': m.role.name, 'text': m.text})
+        .toList();
+
     // Только живой режим (Gemini Live), без запасного.
-    final live = await _live.start();
+    final live = await _live.start(history: history);
     if (live) {
       _liveMode = true;
+      AccessibilityServiceManager.startForeground(); // держим процесс живым
       if (mounted) setState(() => _response = '');
       return; // дальше всё ведёт LiveService (звук, перебивание, действия)
     }
@@ -178,9 +191,10 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _stopConversation() async {
     _stopRequested = true;
     if (_liveMode) {
-      await _live.stop();
+      await _live.stopByUser(); // без авто-переподключения
       _liveMode = false;
     }
+    AccessibilityServiceManager.stopForeground();
     await _voice.stopListening();
     await _voice.stopSpeaking();
     if (mounted) {
