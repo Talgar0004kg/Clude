@@ -175,13 +175,16 @@ class _HomeScreenState extends State<HomeScreen>
       return; // дальше всё ведёт LiveService (звук, перебивание, действия)
     }
 
-    // Live не вышел (часто — квота/биллинг на бесплатном ключе): авто-фолбэк
-    // на бесплатный режим распознавание + текстовая модель + озвучка.
+    // Без фолбэка — честно сообщаем о неудаче подключения.
     _liveMode = false;
-    _logMessage('Live недоступен (${_live.lastError}). Работаю в обычном режиме.',
-        MessageRole.assistant);
-    await _voice.speak('Пятница активирована. Слушаю вас.');
-    await _beginListening();
+    if (mounted) {
+      setState(() {
+        _serviceRunning = false;
+        _state = AssistantState.idle;
+        _response =
+            'Не удалось подключиться к Пятнице (Gemini Live): ${_live.lastError}. Live требует включённого биллинга на ключе.';
+      });
+    }
   }
 
   /// Полная остановка (ручная).
