@@ -3,9 +3,21 @@ class AiConfig {
   // gemini-2.5-flash поддерживает инструмент google_search.
   static const String modelName = 'gemini-2.5-flash';
 
-  // Модель Gemini Live (реальное время, нативный звук + function calling).
-  // gemini-2.0-flash-live-001 отключён Google 01.06.2026 — используем актуальную.
-  static const String liveModel = 'gemini-3.1-flash-live-preview';
+  // Модели Gemini Live (реальное время, нативный звук + function calling).
+  // Перебираются по очереди: первая, что подключится на текущем ключе/тарифе.
+  // Native-audio Flash-модели доступны в БЕСПЛАТНОМ tier (свои лимиты RPM/TPM),
+  // поэтому ставим их первыми, чтобы Live работал без биллинга. Превью-модели
+  // часто платные (дают code 1011 на free tier) — они идут в конце как запасные.
+  static const List<String> liveModelCandidates = [
+    'gemini-live-2.5-flash-native-audio',
+    'gemini-2.5-flash-native-audio-preview-12-2025',
+    'gemini-2.5-flash-native-audio-preview-09-2025',
+    'gemini-live-2.5-flash-preview',
+    'gemini-2.0-flash-live-001',
+  ];
+
+  // Совместимость: первая модель-кандидат (используется как дефолт).
+  static String get liveModel => liveModelCandidates.first;
 
   // Голос Пятницы в Live (женский, под F.R.I.D.A.Y.).
   static const String liveVoice = 'Aoede';

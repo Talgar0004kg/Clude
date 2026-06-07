@@ -175,9 +175,12 @@ class LiveService {
     },
   ];
 
+  // Модель, на которой реально удалось подключиться (для логов/чата).
+  String activeModel = AiConfig.liveModel;
+
   Map<String, dynamic> _setupMessage() => {
         'setup': {
-          'model': 'models/${AiConfig.liveModel}',
+          'model': 'models/$activeModel',
           'generationConfig': {
             'responseModalities': ['AUDIO'],
             'speechConfig': {
@@ -223,13 +226,21 @@ class LiveService {
     }
 
     _emit(LiveState.connecting);
-    // Пробуем версии endpoint по очереди (v1beta, затем v1alpha).
-    for (final ver in _apiVersions) {
-      final ok = await _attempt(ver, key);
-      if (ok) return true;
-      await _resetConnection();
+    // Перебираем модели-кандидаты × версии endpoint. Первая успешная пара
+    // побеждает. Native-audio Flash-модели доступны на бесплатном tier, поэтому
+    // идут первыми — это и даёт живой режим без биллинга.
+    for (final model in AiConfig.liveModelCandidates) {
+      activeModel = model;
+      for (final ver in _apiVersions) {
+        final ok = await _attempt(ver, key);
+        if (ok) {
+          AppLogger.info('Live connected: $model [$ver]');
+          return true;
+        }
+        await _resetConnection();
+      }
     }
-    AppLogger.error('Live: all endpoints failed ($lastError)');
+    AppLogger.error('Live: all models/endpoints failed ($lastError)');
     _active = false;
     _emit(LiveState.idle);
     return false;
@@ -244,7 +255,7 @@ class LiveService {
       _wsSub = _ch!.stream.listen(
         _onMessage,
         onError: (e) {
-          lastError = '[$ver] ошибка: $e';
+          lastError = '[$activeModel/$ver] ошибка: $e';
           AppLogger.error('Live ws error', e);
           _failConnect();
         },
@@ -252,7 +263,7 @@ class LiveService {
           final wasConnecting = _connect != null && !_connect!.isCompleted;
           if (wasConnecting) {
             lastError =
-                '[$ver] закрыто (code ${_ch?.closeCode ?? '-'}: ${_ch?.closeReason ?? ''})';
+                '[$activeModel/$ver] закрыто (code ${_ch?.closeCode ?? '-'}: ${_ch?.closeReason ?? ''})';
           }
           _failConnect();
           // Сессия оборвалась после подключения — переподключаемся (если не
@@ -271,13 +282,13 @@ class LiveService {
         onTimeout: () => false,
       );
       if (!ok) {
-        if (lastError.isEmpty) lastError = '[$ver] таймаут setupComplete';
+        if (lastError.isEmpty) lastError = '[$activeModel/$ver] таймаут setupComplete';
         return false;
       }
       _active = true;
       return true;
     } catch (e) {
-      lastError = '[$ver] исключение: $e';
+      lastError = '[$activeModel/$ver] исключение: $e';
       AppLogger.error('Live connect failed', e);
       return false;
     }
