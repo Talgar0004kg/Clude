@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 import 'package:flutter_pcm_sound/flutter_pcm_sound.dart';
 import 'package:record/record.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -226,10 +227,22 @@ class LiveService {
     }
 
     _emit(LiveState.connecting);
-    // Перебираем модели-кандидаты × версии endpoint. Первая успешная пара
-    // побеждает. Native-audio Flash-модели доступны на бесплатном tier, поэтому
-    // идут первыми — это и даёт живой режим без биллинга.
-    for (final model in AiConfig.liveModelCandidates) {
+    // Спрашиваем у Google по этому ключу, какие модели поддерживают Live
+    // (bidiGenerateContent). Это убирает угадывание имён и сразу видно, есть ли
+    // Live на ключе вообще. К найденным добавляем запасные имена из конфига.
+    final discovered = await _discoverLiveModels(key);
+    final models = <String>[
+      ...discovered,
+      ...AiConfig.liveModelCandidates.where((m) => !discovered.contains(m)),
+    ];
+    if (discovered.isEmpty) {
+      AppLogger.error('Live: ListModels не вернул ни одной bidi-модели');
+    } else {
+      AppLogger.info('Live: доступны модели ${discovered.join(", ")}');
+    }
+
+    // Перебираем модели × версии endpoint. Первая успешная пара побеждает.
+    for (final model in models) {
       activeModel = model;
       for (final ver in _apiVersions) {
         final ok = await _attempt(ver, key);
@@ -240,10 +253,57 @@ class LiveService {
         await _resetConnection();
       }
     }
+    if (discovered.isEmpty && lastError.isEmpty) {
+      lastError = 'у ключа нет Live-моделей (bidiGenerateContent). '
+          'Возможно, Live недоступен на этом ключе/регионе.';
+    }
     AppLogger.error('Live: all models/endpoints failed ($lastError)');
     _active = false;
     _emit(LiveState.idle);
     return false;
+  }
+
+  /// Запрашивает список моделей ключа и возвращает те, что поддерживают Live
+  /// (метод bidiGenerateContent). Имена — без префикса "models/".
+  /// Flash/native-audio модели ставим первыми (бесплатный tier).
+  Future<List<String>> _discoverLiveModels(String key) async {
+    final result = <String>[];
+    for (final ver in _apiVersions) {
+      try {
+        final uri = Uri.parse(
+            'https://generativelanguage.googleapis.com/$ver/models?key=$key&pageSize=1000');
+        final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+        if (resp.statusCode != 200) {
+          lastError = 'ListModels[$ver] HTTP ${resp.statusCode}';
+          continue;
+        }
+        final body = jsonDecode(resp.body) as Map<String, dynamic>;
+        final list = body['models'] as List? ?? const [];
+        for (final m in list) {
+          if (m is! Map) continue;
+          final methods = (m['supportedGenerationMethods'] as List?) ?? const [];
+          if (!methods.contains('bidiGenerateContent')) continue;
+          final name = (m['name'] as String?)?.replaceFirst('models/', '');
+          if (name != null && !result.contains(name)) result.add(name);
+        }
+        if (result.isNotEmpty) break; // нашли на этой версии — хватит
+      } catch (e) {
+        lastError = 'ListModels[$ver] исключение: $e';
+        AppLogger.error('Live ListModels failed', e);
+      }
+    }
+    // Сортировка: сначала бесплатные native-audio / flash.
+    result.sort((a, b) {
+      int score(String s) {
+        final l = s.toLowerCase();
+        if (l.contains('native-audio') && l.contains('flash')) return 0;
+        if (l.contains('flash') && l.contains('live')) return 1;
+        if (l.contains('flash')) return 2;
+        return 3;
+      }
+      return score(a).compareTo(score(b));
+    });
+    return result;
   }
 
   Future<bool> _attempt(String ver, String key) async {

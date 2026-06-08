@@ -182,7 +182,7 @@ class _HomeScreenState extends State<HomeScreen>
         _serviceRunning = false;
         _state = AssistantState.idle;
         _response =
-            'Не удалось подключиться к Пятнице (Gemini Live): ${_live.lastError}. Live требует включённого биллинга на ключе.';
+            'Live не подключился. Причина: ${_live.lastError}';
       });
     }
   }
