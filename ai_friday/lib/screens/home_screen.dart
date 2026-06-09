@@ -50,6 +50,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   late AnimationController _orbController;
   StreamSubscription<double>? _levelSub;
+  StreamSubscription<double>? _liveLevelSub;
 
   @override
   void initState() {
@@ -57,7 +58,11 @@ class _HomeScreenState extends State<HomeScreen>
     WidgetsBinding.instance.addObserver(this);
     _orbController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat();
     _levelSub = _voice.levelStream.listen((lvl) {
-      if (mounted) setState(() => _level = lvl);
+      if (mounted && !_liveMode) setState(() => _level = lvl);
+    });
+    // Уровень микрофона в живом режиме — двигает волну и обновляет счётчики.
+    _liveLevelSub = _live.levelStream.listen((lvl) {
+      if (mounted && _liveMode) setState(() => _level = lvl);
     });
     _liveSub = _live.stateStream.listen(_onLiveState);
     // Логируем реплики и действия Live в чат.
@@ -115,6 +120,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _levelSub?.cancel();
+    _liveLevelSub?.cancel();
     _liveSub?.cancel();
     _userTextSub?.cancel();
     _botTextSub?.cancel();
@@ -400,6 +406,16 @@ class _HomeScreenState extends State<HomeScreen>
                 WaveformWidget(state: _state, controller: _orbController, level: _level),
                 const SizedBox(height: 24),
                 _stateText(),
+                if (_liveMode)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      '🎤 ${(_live.micBytesSent / 1024).toStringAsFixed(0)} КБ  ·  '
+                      '📥 ${_live.serverEvents}  ·  ${_live.activeModel}',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Color(0xFF6B7280), fontSize: 11),
+                    ),
+                  ),
                 if (_transcript.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),

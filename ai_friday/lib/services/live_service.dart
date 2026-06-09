@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:flutter_pcm_sound/flutter_pcm_sound.dart';
@@ -50,6 +51,14 @@ class LiveService {
   Stream<String> get userTextStream => _userTextCtrl.stream;
   Stream<String> get botTextStream => _botTextCtrl.stream;
   Stream<String> get actionStream => _actionCtrl.stream;
+
+  // Уровень микрофона (0..1) для анимации волны в живом режиме.
+  final StreamController<double> _levelCtrl = StreamController.broadcast();
+  Stream<double> get levelStream => _levelCtrl.stream;
+
+  // Диагностика: сколько звука ушло в модель и сколько событий пришло от сервера.
+  int micBytesSent = 0;
+  int serverEvents = 0;
 
   final StringBuffer _inBuf = StringBuffer(); // речь пользователя за ход
   final StringBuffer _outBuf = StringBuffer(); // речь Пятницы за ход
@@ -212,6 +221,8 @@ class LiveService {
     _userStopped = false;
     _seedHistory = history;
     lastError = '';
+    micBytesSent = 0;
+    serverEvents = 0;
     final key = KeyManager().getActiveKey();
     if (key == null) {
       lastError = 'нет API-ключа';
@@ -443,7 +454,10 @@ class LiveService {
   void _sendAudio(Uint8List data) {
     final ch = _ch;
     if (ch == null || !_active) return;
+    // Уровень микрофона для волны (RMS PCM16) — показывает, что звук реально идёт.
+    _levelCtrl.add(_rms(data));
     if (_speaking) return; // полудуплекс: не слушаем, пока сами говорим (нет петли)
+    micBytesSent += data.length;
     ch.sink.add(jsonEncode({
       'realtimeInput': {
         'audio': {'mimeType': 'audio/pcm;rate=16000', 'data': base64Encode(data)}
@@ -451,10 +465,25 @@ class LiveService {
     }));
   }
 
+  /// RMS амплитуда PCM16 (little-endian) в диапазоне 0..1.
+  double _rms(Uint8List bytes) {
+    if (bytes.length < 2) return 0;
+    final bd = ByteData.sublistView(bytes);
+    double sum = 0;
+    final n = bytes.length ~/ 2;
+    for (int i = 0; i < n; i++) {
+      final s = bd.getInt16(i * 2, Endian.little) / 32768.0;
+      sum += s * s;
+    }
+    final rms = sqrt(sum / n);
+    return (rms * 6.0).clamp(0.0, 1.0).toDouble();
+  }
+
   void _onMessage(dynamic raw) {
     try {
       final text = raw is String ? raw : utf8.decode(raw as List<int>);
       final msg = jsonDecode(text) as Map<String, dynamic>;
+      serverEvents++;
       if (msg.containsKey('setupComplete')) {
         _onSetupComplete();
       } else if (msg.containsKey('serverContent')) {
