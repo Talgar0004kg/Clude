@@ -30,10 +30,9 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: ai-chat-platform/frontend/package-lock.json
-      # Автоматически включает GitHub Pages (Source = GitHub Actions)
+      # Читает настройки GitHub Pages (Pages нужно включить один раз в
+      # Settings → Pages → Source: GitHub Actions)
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - run: npm ci
       # Чтобы подключить реальный бэкенд, задайте секрет VITE_API_URL в настройках репозитория.
       - run: npm run build
