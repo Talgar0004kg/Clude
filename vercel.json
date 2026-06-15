@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm --prefix ai-chat-platform/frontend install && npm --prefix ai-chat-platform/frontend run build",
+  "buildCommand": "npm --prefix ai-chat-platform/frontend install && VITE_AI_API=/api/chat npm --prefix ai-chat-platform/frontend run build",
   "outputDirectory": "ai-chat-platform/frontend/dist",
   "installCommand": "echo skip",
   "framework": null

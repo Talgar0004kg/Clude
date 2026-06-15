@@ -7,9 +7,15 @@
 
 import { demoBusinesses, demoLeads, demoChats, demoStats, demoUsers } from './mockData'
 import { demoBotReply } from './demoBot'
+import { buildBrain } from '../utils/buildBrain'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 export const IS_DEMO = !API_URL
+
+// Адрес серверной AI-функции (DeepSeek). На Vercel = '/api/chat'.
+// На GitHub Pages не задан → используется бот-симулятор.
+const AI_API = import.meta.env.VITE_AI_API || ''
+export const HAS_REAL_AI = !!AI_API
 
 // ---------- localStorage-хранилище для ДЕМО ----------
 const LS = {
@@ -122,9 +128,25 @@ export const publicApi = {
 
   async sendMessage(slug, history) {
     if (IS_DEMO) {
-      await delay(600)
       const list = LS.get('chatbiz.businesses', demoBusinesses)
       const b = list.find((x) => x.slug === slug)
+
+      // Если доступна серверная AI-функция — зовём настоящий DeepSeek
+      if (AI_API && b) {
+        try {
+          const system = buildBrain(b.name, b.type, b.bot)
+          const res = await fetch(AI_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ system, history }),
+          })
+          if (res.ok) return await res.json()
+        } catch {
+          // сеть недоступна — откатываемся на симулятор
+        }
+      }
+
+      await delay(600)
       return demoBotReply(b, history)
     }
     return http(`/api/public/chat/${slug}`, {
