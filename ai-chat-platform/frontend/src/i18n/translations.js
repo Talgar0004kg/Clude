@@ -78,7 +78,7 @@ export const translations = {
     'auth.noAccount': 'Нет аккаунта? Зарегистрироваться',
     'auth.loginBtn': 'Войти',
     'auth.registerBtn': 'Создать аккаунт',
-    'auth.demoHint': 'Демо-вход: business@demo.kg / demo (бизнес), admin@demo.kg / demo (админ)',
+    'auth.demoHint': 'Вход: biz@chatbiz.kg / Biz2026 (бизнес) · admin@chatbiz.kg / Admin2026 (админ)',
 
     // --- кабинет ---
     'dash.title': 'Кабинет бизнеса',
@@ -223,7 +223,7 @@ export const translations = {
     'auth.noAccount': 'Аккаунтуңуз жокпу? Катталуу',
     'auth.loginBtn': 'Кирүү',
     'auth.registerBtn': 'Аккаунт түзүү',
-    'auth.demoHint': 'Демо-кирүү: business@demo.kg / demo (бизнес), admin@demo.kg / demo (админ)',
+    'auth.demoHint': 'Кирүү: biz@chatbiz.kg / Biz2026 (бизнес) · admin@chatbiz.kg / Admin2026 (админ)',
 
     // --- кабинет ---
     'dash.title': 'Бизнес кабинети',

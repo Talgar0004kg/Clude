@@ -93,8 +93,13 @@ export const demoStats = {
   b3: { visits: 2410, chats: 388, leads: 96, byDay: [40, 52, 31, 48, 60, 55, 62] },
 }
 
-// Аккаунты для демо-входа
+// Аккаунты для входа на сайт
 export const demoUsers = [
+  // 👑 Админ сайта
+  { email: 'admin@chatbiz.kg', password: 'Admin2026', role: 'admin', name: 'Администратор сайта' },
+  // 🏢 Бизнес-аккаунт (владелец барбершопа «Алмаз»)
+  { email: 'biz@chatbiz.kg', password: 'Biz2026', role: 'business', businessId: 'b1', name: 'Барбершоп «Алмаз»' },
+  // прежние демо-входы (оставлены для совместимости)
   { email: 'business@demo.kg', password: 'demo', role: 'business', businessId: 'b1', name: 'Барбершоп «Алмаз»' },
   { email: 'admin@demo.kg', password: 'demo', role: 'admin', name: 'Администратор' },
 ]
