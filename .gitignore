@@ -9,3 +9,6 @@
 .DS_Store
 openhands/.env
 telegram-agent/.env
+
+# Сгенерированный артефакт для доставки бэкенда (не хранится в git)
+chatbiz-backend.zip
