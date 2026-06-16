@@ -10,5 +10,5 @@
 openhands/.env
 telegram-agent/.env
 
-# Сгенерированный артефакт для доставки бэкенда (не хранится в git)
-chatbiz-backend.zip
+# Сгенерированные артефакты для доставки (не хранятся в git)
+chatbiz-*.zip
