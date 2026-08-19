@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Grok Voice Keyboard</string>
+    <string name="ime_name">Grok Voice Keyboard</string>
+    <string name="settings_title">Grok Keyboard</string>
+    <string name="default_prompt">Transcribe accurately, auto-punctuate, remove filler words, and preserve language switching. Return only the transcription.</string>
+</resources>

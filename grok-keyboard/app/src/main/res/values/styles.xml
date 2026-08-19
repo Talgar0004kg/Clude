@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.GrokKeyboard" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#007AFF</item>
+        <item name="colorAccent">#007AFF</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:navigationBarColor">#F2F2F7</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>
